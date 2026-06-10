@@ -14,6 +14,7 @@ const state = {
   activeItemId: null,     // 現在録音中の項目ID
   currentSegmentStart: null, // 現在区間の開始時刻(Date)
   markers: [],            // [{itemId, startTime(Date)}]
+  recStopTime: null,
   holdTimer: null,
   holdInterval: null,
 
@@ -255,7 +256,10 @@ function updateRecordingUI() {
 
   document.getElementById('rec-banner').classList.toggle('hidden', !isRec);
   document.getElementById('btn-rec-start').classList.toggle('hidden', isRec);
-  document.getElementById('btn-rec-end').classList.toggle('hidden', !isRec);
+  // 録音終了ボタンは常時表示。録音中かどうかでスタイルだけ切替
+  const endBtn = document.getElementById('btn-rec-end');
+  endBtn.classList.toggle('btn-rec-end--idle', !isRec);
+  endBtn.classList.toggle('btn-rec-end--active', isRec);
 
   // ナビボタン無効化
   ['btn-goto-play','btn-goto-items','btn-goto-settings'].forEach(id => {
@@ -275,6 +279,22 @@ function updateRecordingUI() {
 function renderHomeItems() {
   const list = document.getElementById('items-list');
   list.innerHTML = '';
+
+  // ⑤ 曲目未登録時はサンプルを薄い色で表示（データ登録はしない）
+  if (state.items.length === 0 && state.recState !== 'recording') {
+    const samples = ['ハノン', 'ピアノテクニック', 'ブルグミュラー', '発表会曲'];
+    samples.forEach(name => {
+      const btn = document.createElement('button');
+      btn.className = 'item-btn item-btn--sample';
+      btn.disabled = true;
+      btn.innerHTML = `
+        <span class="item-icon"><svg viewBox="0 0 24 24" fill="currentColor" style="opacity:0.2"><circle cx="12" cy="12" r="8"/></svg></span>
+        <span class="item-name">${name}</span>
+      `;
+      list.appendChild(btn);
+    });
+    return;
+  }
 
   state.items.forEach(item => {
     const btn = document.createElement('button');
@@ -471,7 +491,7 @@ async function renderPlayPage() {
       </div>
       <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
     `;
-    row.addEventListener('click', () => openItemHistory(item, segs));
+    row.addEventListener('click', () => openItemHistory(item));
     itemPane.appendChild(row);
   }
   if (itemPane.children.length === 0) {
@@ -516,7 +536,7 @@ async function renderFavTab() {
   }
 }
 
-async function openItemHistory(item, segs) {
+async function openItemHistory(item) {
   const itemPane = document.getElementById('tab-item');
   itemPane.innerHTML = '';
 
@@ -527,14 +547,19 @@ async function openItemHistory(item, segs) {
   header.addEventListener('click', () => renderPlayPage());
   itemPane.appendChild(header);
 
-  // 録音日リスト（新しい順）
-  // recording_id ごとにグループ化し、その録音日のセグメントのみを使用する
+  // DBから最新のセグメントを毎回取得（続きから再生の位置が正しく反映される）
+  const segs = await DB.getSegmentsByItem(item.id);
+  if (segs.length === 0) {
+    itemPane.innerHTML += '<div class="empty-state">録音がまだありません</div>';
+    return;
+  }
+
+  // recording_id ごとにグループ化
   const recIds = [...new Set(segs.map(s => s.recording_id))];
   const recsWithDate = [];
   for (const recId of recIds) {
     const rec = await DB.getRecording(recId);
     if (!rec) continue;
-    // この録音IDかつこの項目IDのセグメントを全件取得
     const recSegs = segs.filter(s => s.recording_id === recId);
     recsWithDate.push({ rec, recSegs });
   }
@@ -552,8 +577,12 @@ async function openItemHistory(item, segs) {
         </div>
         <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
       `;
-      // seg をそのまま渡すことで openPlayer が区間再生・続きから再生を正しく処理する
-      row.addEventListener('click', () => openPlayer(rec, seg, 'item'));
+      // タップごとにDBから最新segを取得してopenPlayerに渡す
+      row.addEventListener('click', async () => {
+        const freshSegs = await DB.getSegmentsByItem(item.id);
+        const freshSeg = freshSegs.find(s => s.id === seg.id) || seg;
+        openPlayer(rec, freshSeg, 'item');
+      });
       itemPane.appendChild(row);
     }
   }
@@ -594,10 +623,34 @@ async function openPlayer(rec, seg, fromType, favStart, favEnd) {
 
   showPage('page-player');
 
+  // デバッグログ：SEGMENTSの実データと再生範囲を出力
+  console.log('[openPlayer] fromType:', fromType);
+  console.log('[openPlayer] seg:', seg ? { id: seg.id, start_seconds: seg.start_seconds, end_seconds: seg.end_seconds, last_position_seconds: seg.last_position_seconds } : null);
+  console.log('[openPlayer] rangeStart:', rangeStart, '/ rangeEnd:', rangeEnd);
+
   // 続きから再生の判定
   const lastPos = seg
     ? (seg.last_position_seconds || 0)
     : (rec.last_position_seconds || 0);
+
+  console.log('[openPlayer] lastPos:', lastPos);
+
+  // canplayイベント後にシーク（iOS Safari対応：未ロード状態でのcurrentTime設定を防ぐ）
+  const seekAndPlay = (seekTo) => {
+    console.log('[openPlayer] seekTo（audio.currentTime設定値）:', seekTo);
+    const doSeek = () => {
+      state.audioElement.currentTime = seekTo;
+      updateSeekDisplay(seekTo, rangeStart, rangeEnd);
+      playAudio();
+    };
+    if (state.audioElement.readyState >= 2) {
+      // 既にロード済みならすぐシーク
+      doSeek();
+    } else {
+      // ロード待ちしてからシーク
+      state.audioElement.addEventListener('canplay', doSeek, { once: true });
+    }
+  };
 
   if (lastPos > rangeStart + 3 && lastPos < rangeEnd - 3) {
     const toast = document.getElementById('resume-toast');
@@ -607,21 +660,15 @@ async function openPlayer(rec, seg, fromType, favStart, favEnd) {
 
     document.getElementById('btn-resume-yes').onclick = () => {
       toast.classList.add('hidden');
-      state.audioElement.currentTime = lastPos;
-      updateSeekDisplay(lastPos, rangeStart, rangeEnd);
-      playAudio();
+      seekAndPlay(lastPos);
     };
     document.getElementById('btn-resume-no').onclick = () => {
       toast.classList.add('hidden');
-      state.audioElement.currentTime = rangeStart;
-      updateSeekDisplay(rangeStart, rangeStart, rangeEnd);
-      playAudio();
+      seekAndPlay(rangeStart);
     };
   } else {
     document.getElementById('resume-toast').classList.add('hidden');
-    state.audioElement.currentTime = rangeStart;
-    updateSeekDisplay(rangeStart, rangeStart, rangeEnd);
-    playAudio();
+    seekAndPlay(rangeStart);
   }
 
   // シークバー更新
