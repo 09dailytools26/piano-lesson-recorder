@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>ピアノレッスン録音</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===== ホーム画面 ===== -->
+<div id="page-home" class="page active">
+  <header class="header">
+    <span class="header-title">ピアノレッスン録音</span>
+    <div class="header-actions">
+      <button class="icon-btn" id="btn-goto-play" aria-label="再生画面">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-goto-items" aria-label="項目管理">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-goto-settings" aria-label="設定">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 録音バナー（録音中のみ表示） -->
+  <div id="rec-banner" class="rec-banner hidden">
+    <span class="rec-dot"></span>
+    <span class="rec-timer" id="rec-timer">00:00:00</span>
+    <span class="rec-label">録音中</span>
+  </div>
+
+  <!-- いま練習中バナー（項目選択後に表示） -->
+  <div id="now-banner" class="now-banner hidden">
+    <span class="now-banner-label">いま練習中</span>
+    <span class="now-banner-name" id="now-banner-name"></span>
+    <span class="now-banner-since" id="now-banner-since"></span>
+  </div>
+
+  <!-- 録音開始ボタン（最上段固定） -->
+  <div class="rec-start-area">
+    <button class="btn-rec-start" id="btn-rec-start">
+      <span class="rec-start-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+      </span>
+      録音開始
+    </button>
+  </div>
+
+  <!-- 項目ボタンリスト -->
+  <div class="items-list" id="items-list">
+    <!-- app.jsで動的生成 -->
+  </div>
+
+  <!-- 録音終了ボタン（最下部固定） -->
+  <div class="rec-end-area">
+    <button class="btn-rec-end hidden" id="btn-rec-end">
+      <span class="rec-end-progress" id="rec-end-progress"></span>
+      録音終了（長押し 1.5秒）
+    </button>
+  </div>
+</div>
+
+<!-- ===== 再生画面 ===== -->
+<div id="page-play" class="page">
+  <header class="header">
+    <button class="icon-btn" id="btn-back-play" aria-label="戻る">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="header-title">再生</span>
+  </header>
+  <div class="tabs">
+    <button class="tab active" data-tab="date">録音日</button>
+    <button class="tab" data-tab="item">項目</button>
+    <button class="tab" data-tab="fav">お気に入り</button>
+  </div>
+  <div id="tab-date" class="tab-pane active"></div>
+  <div id="tab-item" class="tab-pane"></div>
+  <div id="tab-fav" class="tab-pane"></div>
+</div>
+
+<!-- ===== プレーヤー画面 ===== -->
+<div id="page-player" class="page">
+  <header class="header">
+    <button class="icon-btn" id="btn-back-player" aria-label="戻る">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="header-title" id="player-header-title">再生</span>
+  </header>
+  <div class="player-wrap">
+    <div class="player-info">
+      <div class="player-item-name" id="player-item-name"></div>
+      <div class="player-date" id="player-date"></div>
+    </div>
+    <!-- 続きから再生トースト -->
+    <div class="resume-toast hidden" id="resume-toast">
+      <span id="resume-toast-msg"></span>
+      <div class="resume-toast-actions">
+        <button id="btn-resume-yes">続きから</button>
+        <button id="btn-resume-no">最初から</button>
+      </div>
+    </div>
+    <div class="seek-row">
+      <span class="seek-time" id="seek-cur">00:00</span>
+      <input type="range" class="seek-bar" id="seek-bar" min="0" max="1000" value="0">
+      <span class="seek-time" id="seek-dur">00:00</span>
+    </div>
+    <div class="ctrl-row">
+      <button class="ctrl-btn" id="btn-skip-m30" aria-label="30秒戻る">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+        <span>30</span>
+      </button>
+      <button class="ctrl-btn" id="btn-skip-m10" aria-label="10秒戻る">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+        <span>10</span>
+      </button>
+      <button class="ctrl-btn ctrl-play" id="btn-play" aria-label="再生">
+        <svg id="play-icon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      </button>
+      <button class="ctrl-btn" id="btn-skip-p10" aria-label="10秒進む">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.49-3.51"/></svg>
+        <span>10</span>
+      </button>
+      <button class="ctrl-btn" id="btn-skip-p30" aria-label="30秒進む">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-.49-3.51"/></svg>
+        <span>30</span>
+      </button>
+    </div>
+    <div class="speed-row">
+      <button class="speed-btn" data-speed="0.75">×0.75</button>
+      <button class="speed-btn active" data-speed="1">×1.0</button>
+      <button class="speed-btn" data-speed="1.25">×1.25</button>
+      <button class="speed-btn" data-speed="2">×2.0</button>
+    </div>
+    <div class="player-sub-row">
+      <label class="toggle-label">
+        <span>無音スキップ</span>
+        <span class="toggle-track" id="silence-toggle">
+          <span class="toggle-knob"></span>
+        </span>
+      </label>
+      <button class="fav-btn" id="btn-add-fav">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        お気に入り
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 項目管理画面 ===== -->
+<div id="page-items" class="page">
+  <header class="header">
+    <button class="icon-btn" id="btn-back-items" aria-label="戻る">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="header-title">項目管理</span>
+    <button class="text-btn" id="btn-add-item">＋ 追加</button>
+  </header>
+  <div id="items-manage-list" class="items-manage-list"></div>
+</div>
+
+<!-- ===== 設定画面 ===== -->
+<div id="page-settings" class="page">
+  <header class="header">
+    <button class="icon-btn" id="btn-back-settings" aria-label="戻る">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="header-title">設定</span>
+  </header>
+  <div class="settings-body">
+    <div class="settings-section">
+      <div class="settings-row">
+        <div class="settings-row-main">
+          <span class="settings-row-label">無音スキップ（デフォルト）</span>
+          <span class="settings-row-sub">再生時に無音部分を自動でスキップ</span>
+        </div>
+        <span class="toggle-track" id="settings-silence-toggle">
+          <span class="toggle-knob"></span>
+        </span>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-main">
+          <span class="settings-row-label">デフォルト再生速度</span>
+        </div>
+        <select class="settings-select" id="settings-speed">
+          <option value="0.75">×0.75</option>
+          <option value="1" selected>×1.0</option>
+          <option value="1.25">×1.25</option>
+          <option value="2">×2.0</option>
+        </select>
+      </div>
+    </div>
+    <div class="settings-section-label">データ管理</div>
+    <div class="settings-section">
+      <div class="settings-row tappable" id="btn-manage-data">
+        <span class="settings-row-label">録音データを管理</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="chevron"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    </div>
+    <div class="app-version">ピアノレッスン録音 v1.0</div>
+  </div>
+</div>
+
+<!-- ===== モーダル類 ===== -->
+
+<!-- 項目追加・編集モーダル -->
+<div id="modal-item" class="modal-overlay hidden">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-item-title">項目を追加</span>
+      <button class="icon-btn" id="modal-item-close" aria-label="閉じる">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <label class="field-label">項目名</label>
+      <input type="text" class="field-input" id="item-name-input" placeholder="例: ハノン">
+      <label class="check-row" id="measure-bar-check">
+        <span class="check-box" id="measure-bar-box"></span>
+        <span class="check-text">小節管理（将来機能）</span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" id="btn-save-item">保存する</button>
+      <button class="btn-danger hidden" id="btn-delete-item">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- お気に入り登録モーダル -->
+<div id="modal-fav" class="modal-overlay hidden">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <span class="modal-title">お気に入りに追加</span>
+      <button class="icon-btn" id="modal-fav-close" aria-label="閉じる">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <label class="field-label">タイトル</label>
+      <input type="text" class="field-input" id="fav-title-input" placeholder="例: 右手見本">
+      <div class="fav-time-row">
+        <button class="fav-time-btn" id="btn-fav-start">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><circle cx="12" cy="12" r="8"/></svg>
+          <span id="fav-start-label">開始位置を設定</span>
+        </button>
+        <button class="fav-time-btn" id="btn-fav-end">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          <span id="fav-end-label">終了位置を設定</span>
+        </button>
+      </div>
+      <p class="fav-hint">再生中に開始・終了ボタンをタップして区間を指定します</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" id="btn-save-fav">保存する</button>
+    </div>
+  </div>
+</div>
+
+<!-- 削除確認モーダル -->
+<div id="modal-confirm" class="modal-overlay hidden">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <span class="modal-title" id="confirm-title">確認</span>
+    </div>
+    <div class="modal-body">
+      <p class="confirm-msg" id="confirm-msg"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-danger" id="btn-confirm-ok">削除する</button>
+      <button class="btn-secondary" id="btn-confirm-cancel">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- トースト通知 -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="db.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
