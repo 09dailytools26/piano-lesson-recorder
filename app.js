@@ -254,9 +254,22 @@ async function onRecordingStopped() {
 function updateRecordingUI() {
   const isRec = state.recState === 'recording';
 
-  document.getElementById('rec-banner').classList.toggle('hidden', !isRec);
+  // 録音開始ボタン表示切替
   document.getElementById('btn-rec-start').classList.toggle('hidden', isRec);
-  // 録音終了ボタンは常時表示。録音中かどうかでスタイルだけ切替
+
+  // ステータスエリア切替（固定高さ・レイアウト不変）
+  document.getElementById('status-idle').style.display    = isRec ? 'none' : 'flex';
+  document.getElementById('status-rec-wrap').style.display = isRec ? 'flex' : 'none';
+
+  if (!isRec) {
+    // 待機中に戻したとき練習中表示をリセット
+    const nowEl = document.getElementById('status-now');
+    nowEl.classList.add('empty');
+    document.getElementById('now-banner-name').textContent = '曲目を選んでください';
+    document.getElementById('now-banner-since').textContent = '';
+  }
+
+  // 録音終了ボタン スタイル切替
   const endBtn = document.getElementById('btn-rec-end');
   endBtn.classList.toggle('btn-rec-end--idle', !isRec);
   endBtn.classList.toggle('btn-rec-end--active', isRec);
@@ -265,10 +278,6 @@ function updateRecordingUI() {
   ['btn-goto-play','btn-goto-items','btn-goto-settings'].forEach(id => {
     document.getElementById(id).classList.toggle('disabled', isRec);
   });
-
-  if (!isRec) {
-    document.getElementById('now-banner').classList.add('hidden');
-  }
 
   renderHomeItems();
 }
@@ -362,7 +371,8 @@ function tapItemButton(itemId) {
   const item = state.items.find(i => i.id === itemId);
   document.getElementById('now-banner-name').textContent = item ? item.name : '';
   document.getElementById('now-banner-since').textContent = fmtTime(elapsed) + ' から';
-  document.getElementById('now-banner').classList.remove('hidden');
+  const nowEl = document.getElementById('status-now');
+  nowEl.classList.remove('empty');
 
   renderHomeItems();
 }
