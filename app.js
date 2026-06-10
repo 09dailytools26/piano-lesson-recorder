@@ -76,9 +76,19 @@ function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
    ページ遷移
 ====================================================== */
 function initNavigation() {
-  document.getElementById('btn-goto-play').addEventListener('click', () => {
-    renderPlayPage();
+  // タブ切替（1回だけ登録）
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    });
+  });
+
+  document.getElementById('btn-goto-play').addEventListener('click', async () => {
     showPage('page-play');
+    await renderPlayPage();
   });
   document.getElementById('btn-goto-items').addEventListener('click', () => {
     renderItemsManage();
@@ -180,23 +190,26 @@ async function startRecording() {
 
 async function stopRecording() {
   if (!state.mediaRecorder || state.recState !== 'recording') return;
+  // 終了時刻をここで確定（onstop発火前に最後の区間を閉じる）
+  state.recStopTime = Date.now();
   state.mediaRecorder.stop();
   state.mediaRecorder.stream.getTracks().forEach(t => t.stop());
   clearInterval(state.recTimerInterval);
 }
 
 async function onRecordingStopped() {
-  const totalSec = (Date.now() - state.recStartTime) / 1000;
+  const stopTime = state.recStopTime || Date.now();
+  const totalSec = (stopTime - state.recStartTime) / 1000;
   const blob = new Blob(state.audioChunks, {
     type: state.mediaRecorder.mimeType || 'audio/webm'
   });
 
-  // 最後のセグメントを閉じる
+  // 最後のセグメントを閉じる（stopRecordingで確定した時刻を使用）
   if (state.activeItemId && state.currentSegmentStart) {
     state.markers.push({
       itemId: state.activeItemId,
       startTime: state.currentSegmentStart,
-      endTime: Date.now()
+      endTime: stopTime
     });
   }
 
@@ -343,10 +356,37 @@ async function renderPlayPage() {
 
   // 録音日タブ
   const datePane = document.getElementById('tab-date');
+  datePane.innerHTML = '';
+
   if (recordings.length === 0) {
     datePane.innerHTML = '<div class="empty-state">録音がまだありません</div>';
   } else {
-    datePane.innerHTML = '';
+    // 削除ツールバー
+    const toolbar = document.createElement('div');
+    toolbar.className = 'delete-toolbar';
+    toolbar.innerHTML = `
+      <span class="delete-toolbar-count" id="delete-count">0件選択中</span>
+      <button class="delete-toolbar-btn" id="btn-delete-selected" disabled aria-label="選択した録音を削除">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6"/><path d="M14 11v6"/>
+          <path d="M9 6V4h6v2"/>
+        </svg>
+        削除
+      </button>
+    `;
+    datePane.appendChild(toolbar);
+
+    const selectedIds = new Set();
+
+    function updateToolbar() {
+      const count = selectedIds.size;
+      document.getElementById('delete-count').textContent = count + '件選択中';
+      const btn = document.getElementById('btn-delete-selected');
+      btn.disabled = count === 0;
+    }
+
     for (const rec of recordings) {
       const segs = await DB.getSegmentsByRecording(rec.id);
       const itemNames = [...new Set(
@@ -355,16 +395,65 @@ async function renderPlayPage() {
 
       const row = document.createElement('div');
       row.className = 'list-item';
+      row.dataset.recId = rec.id;
       row.innerHTML = `
+        <label class="rec-checkbox" onclick="event.stopPropagation()">
+          <input type="checkbox" class="rec-check-input" data-id="${rec.id}" aria-label="${fmtDate(rec.lesson_date)}を選択">
+          <span class="rec-check-box"></span>
+        </label>
         <div class="list-item-main">
           <div class="list-item-title">${fmtDate(rec.lesson_date)}</div>
           <div class="list-item-sub">${itemNames || '（項目なし）'} · ${fmtTime(rec.duration_seconds)}</div>
         </div>
         <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
       `;
-      row.addEventListener('click', () => openPlayer(rec, null, 'date'));
+
+      const checkbox = row.querySelector('.rec-check-input');
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) {
+          selectedIds.add(rec.id);
+          row.classList.add('selected');
+        } else {
+          selectedIds.delete(rec.id);
+          row.classList.remove('selected');
+        }
+        updateToolbar();
+      });
+
+      // チェックボックス以外のタップで再生
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.rec-checkbox')) return;
+        openPlayer(rec, null, 'date');
+      });
+
       datePane.appendChild(row);
     }
+
+    // 削除ボタンのイベント登録
+    document.getElementById('btn-delete-selected').addEventListener('click', async () => {
+      if (selectedIds.size === 0) return;
+      const count = selectedIds.size;
+      document.getElementById('confirm-title').textContent = '録音を削除';
+      document.getElementById('confirm-msg').textContent =
+        '選択した' + count + '件の録音を削除しますか？\n関連する区間・お気に入りデータも削除されます。';
+      showModal('modal-confirm');
+      const okBtn = document.getElementById('btn-confirm-ok');
+      const cancelBtn = document.getElementById('btn-confirm-cancel');
+      const cleanup = () => {
+        hideModal('modal-confirm');
+        okBtn.onclick = null;
+        cancelBtn.onclick = null;
+      };
+      okBtn.onclick = async () => {
+        cleanup();
+        for (const id of selectedIds) {
+          await DB.deleteRecording(id);
+        }
+        showToast(count + '件の録音を削除しました');
+        await renderPlayPage();  // 全タブ（録音日・曲目・お気に入り）を再描画
+      };
+      cancelBtn.onclick = cleanup;
+    });
   }
 
   // 項目タブ
@@ -392,15 +481,6 @@ async function renderPlayPage() {
   // お気に入りタブ
   await renderFavTab();
 
-  // タブ切替
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-    });
-  });
 }
 
 async function renderFavTab() {
@@ -447,23 +527,35 @@ async function openItemHistory(item, segs) {
   header.addEventListener('click', () => renderPlayPage());
   itemPane.appendChild(header);
 
-  // 録音日リスト
+  // 録音日リスト（新しい順）
+  // recording_id ごとにグループ化し、その録音日のセグメントのみを使用する
   const recIds = [...new Set(segs.map(s => s.recording_id))];
+  const recsWithDate = [];
   for (const recId of recIds) {
     const rec = await DB.getRecording(recId);
     if (!rec) continue;
-    const seg = segs.find(s => s.recording_id === recId);
-    const row = document.createElement('div');
-    row.className = 'list-item';
-    row.innerHTML = `
-      <div class="list-item-main">
-        <div class="list-item-title">${fmtDate(rec.lesson_date)}</div>
-        <div class="list-item-sub">${fmtTime(seg.start_seconds)}〜${fmtTime(seg.end_seconds)}</div>
-      </div>
-      <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
-    `;
-    row.addEventListener('click', () => openPlayer(rec, seg, 'item'));
-    itemPane.appendChild(row);
+    // この録音IDかつこの項目IDのセグメントを全件取得
+    const recSegs = segs.filter(s => s.recording_id === recId);
+    recsWithDate.push({ rec, recSegs });
+  }
+  // 新しい日付順にソート
+  recsWithDate.sort((a, b) => b.rec.lesson_date.localeCompare(a.rec.lesson_date));
+
+  for (const { rec, recSegs } of recsWithDate) {
+    for (const seg of recSegs) {
+      const row = document.createElement('div');
+      row.className = 'list-item';
+      row.innerHTML = `
+        <div class="list-item-main">
+          <div class="list-item-title">${fmtDate(rec.lesson_date)}</div>
+          <div class="list-item-sub">${fmtTime(seg.start_seconds)}〜${fmtTime(seg.end_seconds)}</div>
+        </div>
+        <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+      `;
+      // seg をそのまま渡すことで openPlayer が区間再生・続きから再生を正しく処理する
+      row.addEventListener('click', () => openPlayer(rec, seg, 'item'));
+      itemPane.appendChild(row);
+    }
   }
 }
 
