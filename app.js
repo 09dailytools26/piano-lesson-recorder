@@ -17,6 +17,8 @@ const state = {
   recStopTime: null,
   holdTimer: null,
   holdInterval: null,
+  wakeLock: null,        // Wake Lock API
+  noSleepVideo: null,    // iOS用スリープ抑止動画
 
   // 再生
   audioElement: null,
@@ -222,6 +224,11 @@ async function startRecording() {
       document.getElementById('rec-timer').textContent = fmtTime(elapsed);
     }, 500);
 
+    // === 画面スリープ抑止（3層対策） ===
+    acquireWakeLock();
+    startNoSleep();
+    startVisibilityWatcher();
+
   } catch (err) {
     console.error(err);
     if (err.name === 'NotAllowedError') {
@@ -239,6 +246,107 @@ async function stopRecording() {
   state.mediaRecorder.stop();
   state.mediaRecorder.stream.getTracks().forEach(t => t.stop());
   clearInterval(state.recTimerInterval);
+
+  // スリープ抑止を解除
+  releaseWakeLock();
+  stopNoSleep();
+  stopVisibilityWatcher();
+}
+
+/* -------------------------------------------------------
+   Wake Lock API（対応端末のみ有効・失敗しても録音継続）
+------------------------------------------------------- */
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request('screen');
+    console.log('[WakeLock] 取得成功');
+    // ページ復帰時に再取得（iOSはバックグラウンドで自動解放される）
+    state.wakeLock.addEventListener('release', () => {
+      console.log('[WakeLock] 解放された');
+    });
+  } catch (e) {
+    console.log('[WakeLock] 取得失敗（録音は継続）:', e.message);
+  }
+}
+
+function releaseWakeLock() {
+  if (state.wakeLock) {
+    state.wakeLock.release().catch(() => {});
+    state.wakeLock = null;
+    console.log('[WakeLock] 解放');
+  }
+}
+
+/* -------------------------------------------------------
+   No-sleep動画ループ（iOS Safari/PWA用スリープ抑止）
+   ユーザー操作コールバック内で呼ぶ必要あり
+------------------------------------------------------- */
+function startNoSleep() {
+  if (state.noSleepVideo) return;
+  // 1px透明なwebm動画をBase64で埋め込み（ループ再生でスリープを抑止）
+  const video = document.createElement('video');
+  video.setAttribute('playsinline', '');
+  video.setAttribute('muted', '');
+  video.loop = true;
+  video.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1';
+  // 最小限のMP4（無音・1フレーム・Base64）
+  video.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAA' +
+    'uttZGF0AAACrQYF//+p3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0OCByMjY0MyA1YzY1NzA0IC0gSC4yNjQv' +
+    'TVBFR0FWQyBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMTUgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY' +
+    '0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0xIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDM6MHgxMTMgbWU9a' +
+    'GV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiByYXRlX3RvbD0' +
+    'xLjAgcmNfbG9va2FoZWFkPTQwIHZidl9tYXhyYXRlPTc2OCB2YnZfYnVmc2l6ZT0zMDAwIGNyZj0yMy4wIHFjb21wPT' +
+    'AuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMAAAAAAyZYiEB//qnuRgI' +
+    '6lAAPCwCdgABbgCbBQAABtABsAAAMCAAATkqZHye8yMAAAAGUGaAWQAABVgAAADALkAAAA+QZoEbCQAABVAAAADAOUAA' +
+    'AAkQZoHbCQAABVAAAADAOUAAAArQZoKbCQAABVAAAADAOUAAAAkQZoNbCQAABVAAAADAOUAAAArQZoQbCQAABVAAAADAO' +
+    'UAAAAkQZoTbCQAABVAAAADAOUAAAArQZoWbCQAABVAAAADAOUAAAAkQZoZbCQAABVAAAADAOUAAAArQZocbCQAABVAAAA' +
+    'DAOUAAAAkQZofbCQAABVAAAADAOUAAAArQZoibCQAABVAAAADAOUAAAAkQZolbCQAABVAAAADAOUAAAArQZoobCQAABVA' +
+    'AAADAOUAAAAkQZorbCQAABVAAAADAOUAAAArQZoubCQAABVAAAADAOUAAAAkQZoxbCQAABVAAAADAOUAAAArQZo0bCQAA' +
+    'BVAAAADAOUAAAAkQZo3bCQAABVAAAADAOUAAAArQZo6bCQAABVAAAADAOUAAAAkQZo9bCQAABVAAAADAOUAAAArQZpAbC' +
+    'QAABVAAAADAOUAAABIQAAAA';
+  document.body.appendChild(video);
+  video.play().then(() => {
+    console.log('[NoSleep] 動画再生開始');
+  }).catch(e => {
+    console.log('[NoSleep] 動画再生失敗:', e.message);
+  });
+  state.noSleepVideo = video;
+}
+
+function stopNoSleep() {
+  if (state.noSleepVideo) {
+    state.noSleepVideo.pause();
+    state.noSleepVideo.remove();
+    state.noSleepVideo = null;
+    console.log('[NoSleep] 停止');
+  }
+}
+
+/* -------------------------------------------------------
+   visibilitychange ウォッチャー
+   スリープ復帰後にタイマーを補正・WakeLockを再取得
+------------------------------------------------------- */
+let _visHandler = null;
+function startVisibilityWatcher() {
+  stopVisibilityWatcher();
+  _visHandler = async () => {
+    if (document.visibilityState === 'visible' && state.recState === 'recording') {
+      console.log('[Visibility] 復帰検知 - タイマー補正・WakeLock再取得');
+      // WakeLockが解放されていたら再取得
+      if (!state.wakeLock || state.wakeLock.released) {
+        await acquireWakeLock();
+      }
+    }
+  };
+  document.addEventListener('visibilitychange', _visHandler);
+}
+
+function stopVisibilityWatcher() {
+  if (_visHandler) {
+    document.removeEventListener('visibilitychange', _visHandler);
+    _visHandler = null;
+  }
 }
 
 async function onRecordingStopped() {
@@ -1049,6 +1157,7 @@ async function init() {
   initPlayer();
   initItemModal();
   initSettings();
+  updateRecordingUI(); // 起動時にslide-disabledを正しく設定
 }
 
 document.addEventListener('DOMContentLoaded', init);
