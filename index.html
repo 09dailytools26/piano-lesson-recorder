@@ -18,7 +18,7 @@
       <button class="icon-btn" id="btn-goto-play" aria-label="再生画面">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
       </button>
-      <button class="icon-btn" id="btn-goto-items" aria-label="項目管理">
+      <button class="icon-btn" id="btn-goto-items" aria-label="曲目管理">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
       </button>
       <button class="icon-btn" id="btn-goto-settings" aria-label="設定">
@@ -29,24 +29,28 @@
 
   <!-- ステータスエリア（固定高さ・常時表示） -->
   <div class="status-area">
-    <!-- 待機中 -->
-    <div class="status-idle" id="status-idle">
-      <div class="status-idle-icon">
-        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-      </div>
-      <span class="status-idle-text">録音待機中</span>
+    <!-- 丸アイコン：常時表示・録音中は赤 -->
+    <div class="status-circle" id="status-circle">
+      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
     </div>
-    <!-- 録音中：タイマー＋練習中情報を横並び -->
-    <div class="status-rec-wrap" id="status-rec-wrap">
-      <div class="status-rec" id="status-rec">
-        <span class="rec-dot"></span>
-        <span class="rec-timer" id="rec-timer">00:00:00</span>
-        <span class="rec-label">録音中</span>
+    <!-- 右側テキストエリア：待機中テキスト / 録音中タイマー+練習中を切替 -->
+    <div class="status-right">
+      <!-- 待機中 -->
+      <div class="status-idle" id="status-idle">
+        <span class="status-idle-text">録音待機中</span>
       </div>
-      <div class="status-now empty" id="status-now">
-        <span class="now-label">♪ いま練習中</span>
-        <span class="now-name" id="now-banner-name">曲目を選んでください</span>
-        <span class="now-since" id="now-banner-since"></span>
+      <!-- 録音中：タイマー＋練習中情報を縦並び -->
+      <div class="status-rec-wrap" id="status-rec-wrap">
+        <div class="status-rec" id="status-rec">
+          <span class="rec-dot"></span>
+          <span class="rec-timer" id="rec-timer">00:00:00</span>
+          <span class="rec-label">録音中</span>
+        </div>
+        <div class="status-now empty" id="status-now">
+          <span class="now-label">♪ いま練習中</span>
+          <span class="now-name" id="now-banner-name">曲目を選んでください</span>
+          <span class="now-since" id="now-banner-since"></span>
+        </div>
       </div>
     </div>
   </div>
@@ -61,17 +65,21 @@
     </button>
   </div>
 
-  <!-- 項目ボタンリスト -->
+  <!-- 曲目ボタンリスト -->
   <div class="items-list" id="items-list">
     <!-- app.jsで動的生成 -->
   </div>
 
-  <!-- 録音終了ボタン（最下部固定） -->
+  <!-- 録音終了スライドボタン（最下部固定） -->
   <div class="rec-end-area">
-    <button class="btn-rec-end btn-rec-end--idle" id="btn-rec-end">
-      <span class="rec-end-progress" id="rec-end-progress"></span>
-      録音終了（長押し 1.5秒）
-    </button>
+    <div class="slide-to-stop" id="slide-to-stop">
+      <div class="slide-track">
+        <span class="slide-label" id="slide-label">録音終了　→　→　→</span>
+        <div class="slide-thumb" id="slide-thumb">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="26" height="26"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -84,12 +92,12 @@
     <span class="header-title">再生</span>
   </header>
   <div class="tabs">
-    <button class="tab active" data-tab="date">録音日</button>
-    <button class="tab" data-tab="item">項目</button>
+    <button class="tab" data-tab="date">録音日</button>
+    <button class="tab active" data-tab="item">曲目別</button>
     <button class="tab" data-tab="fav">お気に入り</button>
   </div>
-  <div id="tab-date" class="tab-pane active"></div>
-  <div id="tab-item" class="tab-pane"></div>
+  <div id="tab-date" class="tab-pane"></div>
+  <div id="tab-item" class="tab-pane active"></div>
   <div id="tab-fav" class="tab-pane"></div>
 </div>
 
@@ -161,18 +169,18 @@
   </div>
 </div>
 
-<!-- ===== 項目管理画面 ===== -->
+<!-- ===== 曲目管理画面 ===== -->
 <div id="page-items" class="page">
   <header class="header">
     <button class="icon-btn" id="btn-back-items" aria-label="戻る">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
-    <span class="header-title">項目管理</span>
+    <span class="header-title">曲目管理</span>
     <button class="text-btn" id="btn-add-item">＋ 追加</button>
   </header>
   <div class="items-guide">
     <p class="items-guide-text">教本名や曲名を登録してください</p>
-    <p class="items-guide-examples">入力例：ハノン・ピアノテクニック・ブルグミュラー18 4番 ジプシー・ソナチネ Op.36-1 第1楽章・発表会曲</p>
+    <p class="items-guide-examples">「ハノン」、「ピアノテクニック」、「ブルグミュラー」、「発表会の曲」などと入れてね。曲目ごとに再生できるようになるよ。</p>
   </div>
   <div id="items-manage-list" class="items-manage-list"></div>
 </div>
@@ -186,7 +194,8 @@
     <span class="header-title">設定</span>
   </header>
   <div class="settings-body">
-    <div class="settings-section">
+    <!-- 無音スキップ・デフォルト再生速度：将来実装のため非表示（機能は保持） -->
+    <div class="settings-section hidden">
       <div class="settings-row">
         <div class="settings-row-main">
           <span class="settings-row-label">無音スキップ（デフォルト）</span>
@@ -221,17 +230,17 @@
 
 <!-- ===== モーダル類 ===== -->
 
-<!-- 項目追加・編集モーダル -->
+<!-- 曲目追加・編集モーダル -->
 <div id="modal-item" class="modal-overlay hidden">
   <div class="modal-sheet">
     <div class="modal-header">
-      <span class="modal-title" id="modal-item-title">項目を追加</span>
+      <span class="modal-title" id="modal-item-title">曲目を追加</span>
       <button class="icon-btn" id="modal-item-close" aria-label="閉じる">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
     </div>
     <div class="modal-body">
-      <label class="field-label">項目名</label>
+      <label class="field-label">曲目名</label>
       <input type="text" class="field-input" id="item-name-input" placeholder="例: ハノン">
       <label class="check-row" id="measure-bar-check">
         <span class="check-box" id="measure-bar-box"></span>

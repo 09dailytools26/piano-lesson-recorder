@@ -114,33 +114,76 @@ function initNavigation() {
 function initRecording() {
   document.getElementById('btn-rec-start').addEventListener('click', startRecording);
 
-  const endBtn = document.getElementById('btn-rec-end');
-  // 長押し1.5秒で録音終了
-  function onHoldStart(e) {
+  // スライドで録音終了
+  initSlideToStop();
+}
+
+function initSlideToStop() {
+  const wrap  = document.getElementById('slide-to-stop');
+  const thumb = document.getElementById('slide-thumb');
+  const label = document.getElementById('slide-label');
+  let dragging = false;
+  let startX = 0;
+  let currentX = 0;
+  let trackWidth = 0;
+  const thumbW = 64; // thumbの幅px
+
+  function getTrackWidth() {
+    return wrap.offsetWidth - thumbW - 8; // 8=左右padding
+  }
+
+  function onStart(e) {
+    if (state.recState !== 'recording') return;
+    trackWidth = getTrackWidth();
+    if (trackWidth <= 0) return; // レイアウト未確定時は無視
+    dragging = true;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
+    thumb.style.transition = 'none';
     e.preventDefault();
-    let progress = 0;
-    const progressEl = document.getElementById('rec-end-progress');
-    state.holdInterval = setInterval(() => {
-      progress += (50 / 1500) * 100;
-      progressEl.style.width = Math.min(progress, 100) + '%';
-    }, 50);
-    state.holdTimer = setTimeout(() => {
-      clearInterval(state.holdInterval);
-      progressEl.style.width = '0%';
-      stopRecording();
-    }, 1500);
   }
-  function onHoldEnd() {
-    clearTimeout(state.holdTimer);
-    clearInterval(state.holdInterval);
-    document.getElementById('rec-end-progress').style.width = '0%';
+
+  function onMove(e) {
+    if (!dragging) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    currentX = Math.max(0, Math.min(trackWidth, x - startX));
+    thumb.style.transform = `translateX(${currentX}px)`;
+    const ratio = currentX / trackWidth;
+    label.style.opacity = 1 - ratio * 1.5;
+    if (ratio >= 0.9) {
+      thumb.style.background = 'var(--red-dark)';
+    } else {
+      thumb.style.background = '';
+    }
+    e.preventDefault();
   }
-  endBtn.addEventListener('mousedown', onHoldStart);
-  endBtn.addEventListener('touchstart', onHoldStart, { passive: false });
-  endBtn.addEventListener('mouseup', onHoldEnd);
-  endBtn.addEventListener('mouseleave', onHoldEnd);
-  endBtn.addEventListener('touchend', onHoldEnd);
-  endBtn.addEventListener('touchcancel', onHoldEnd);
+
+  function onEnd() {
+    if (!dragging) return;
+    dragging = false;
+    const ratio = currentX / trackWidth;
+    if (ratio >= 0.85) {
+      // 完了：右端まで到達
+      thumb.style.transition = 'transform 0.15s';
+      thumb.style.transform = `translateX(${trackWidth}px)`;
+      setTimeout(() => {
+        stopRecording();
+      }, 150);
+    } else {
+      // キャンセル：元に戻す
+      thumb.style.transition = 'transform 0.3s';
+      thumb.style.transform = 'translateX(0)';
+      label.style.opacity = '1';
+      thumb.style.background = '';
+    }
+    currentX = 0;
+  }
+
+  thumb.addEventListener('mousedown', onStart);
+  thumb.addEventListener('touchstart', onStart, { passive: false });
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchend', onEnd);
 }
 
 async function startRecording() {
@@ -258,8 +301,11 @@ function updateRecordingUI() {
   document.getElementById('btn-rec-start').classList.toggle('hidden', isRec);
 
   // ステータスエリア切替（固定高さ・レイアウト不変）
-  document.getElementById('status-idle').style.display    = isRec ? 'none' : 'flex';
+  document.getElementById('status-idle').style.display     = isRec ? 'none' : 'flex';
   document.getElementById('status-rec-wrap').style.display = isRec ? 'flex' : 'none';
+  // 丸アイコン：録音中は赤、待機中は青
+  const circle = document.getElementById('status-circle');
+  if (circle) circle.classList.toggle('status-circle--rec', isRec);
 
   if (!isRec) {
     // 待機中に戻したとき練習中表示をリセット
@@ -269,10 +315,16 @@ function updateRecordingUI() {
     document.getElementById('now-banner-since').textContent = '';
   }
 
-  // 録音終了ボタン スタイル切替
-  const endBtn = document.getElementById('btn-rec-end');
-  endBtn.classList.toggle('btn-rec-end--idle', !isRec);
-  endBtn.classList.toggle('btn-rec-end--active', isRec);
+  // スライドボタン 有効/無効切替
+  const slideWrap = document.getElementById('slide-to-stop');
+  if (slideWrap) {
+    slideWrap.classList.toggle('slide-disabled', !isRec);
+    // ラベル・サム位置リセット
+    const thumb = document.getElementById('slide-thumb');
+    const label = document.getElementById('slide-label');
+    if (thumb) { thumb.style.transform = 'translateX(0)'; thumb.style.background = ''; }
+    if (label) { label.style.opacity = '1'; }
+  }
 
   // ナビボタン無効化
   ['btn-goto-play','btn-goto-items','btn-goto-settings'].forEach(id => {
@@ -486,26 +538,30 @@ async function renderPlayPage() {
     });
   }
 
-  // 項目タブ
+  // 曲目別タブ（ボタン形式）
   const itemPane = document.getElementById('tab-item');
   itemPane.innerHTML = '';
+  const itemGrid = document.createElement('div');
+  itemGrid.className = 'item-tab-grid';
+  let hasItem = false;
   for (const item of items) {
     const segs = await DB.getSegmentsByItem(item.id);
     if (segs.length === 0) continue;
-    const row = document.createElement('div');
-    row.className = 'list-item';
-    row.innerHTML = `
-      <div class="list-item-main">
-        <div class="list-item-title">${item.name}</div>
-        <div class="list-item-sub">${segs.length}件の録音</div>
-      </div>
-      <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+    hasItem = true;
+    const btn = document.createElement('button');
+    btn.className = 'item-tab-btn';
+    btn.innerHTML = `
+      <span style="flex:1;text-align:left">${item.name}</span>
+      <span class="item-tab-count">${segs.length}件</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
     `;
-    row.addEventListener('click', () => openItemHistory(item));
-    itemPane.appendChild(row);
+    btn.addEventListener('click', () => openItemHistory(item));
+    itemGrid.appendChild(btn);
   }
-  if (itemPane.children.length === 0) {
+  if (!hasItem) {
     itemPane.innerHTML = '<div class="empty-state">録音がまだありません</div>';
+  } else {
+    itemPane.appendChild(itemGrid);
   }
 
   // お気に入りタブ
@@ -896,7 +952,7 @@ function openItemModal(item = null) {
   state.editingItemId = item ? item.id : null;
   state.measureBarChecked = item ? item.measure_bar : false;
 
-  document.getElementById('modal-item-title').textContent = item ? '項目を編集' : '項目を追加';
+  document.getElementById('modal-item-title').textContent = item ? '曲目を編集' : '曲目を追加';
   document.getElementById('item-name-input').value = item ? item.name : '';
   document.getElementById('measure-bar-box').classList.toggle('checked', state.measureBarChecked);
   document.getElementById('btn-delete-item').classList.toggle('hidden', !item);
@@ -915,7 +971,7 @@ function initItemModal() {
 
   document.getElementById('btn-save-item').addEventListener('click', async () => {
     const name = document.getElementById('item-name-input').value.trim();
-    if (!name) { showToast('項目名を入力してください'); return; }
+    if (!name) { showToast('曲目名を入力してください'); return; }
 
     if (state.editingItemId) {
       const item = state.items.find(i => i.id === state.editingItemId);
@@ -936,8 +992,8 @@ function initItemModal() {
 
   document.getElementById('btn-delete-item').addEventListener('click', async () => {
     if (!state.editingItemId) return;
-    document.getElementById('confirm-title').textContent = '項目を削除';
-    document.getElementById('confirm-msg').textContent = 'この項目を削除しますか？\n録音データは残ります。';
+    document.getElementById('confirm-title').textContent = '曲目を削除';
+    document.getElementById('confirm-msg').textContent = 'この曲目を削除しますか？\n録音データは残ります。';
     hideModal('modal-item');
     showModal('modal-confirm');
     const okBtn = document.getElementById('btn-confirm-ok');
