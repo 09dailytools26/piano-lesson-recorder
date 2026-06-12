@@ -66,6 +66,15 @@ svg { display: block; }
   flex: 1;
   color: var(--blue-dark);
   letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.header-clef {
+  width: 22px;
+  height: 33px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 3px rgba(255,127,138,0.3));
 }
 .header-actions { display: flex; gap: 6px; }
 .icon-btn {
