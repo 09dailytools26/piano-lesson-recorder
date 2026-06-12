@@ -4,11 +4,11 @@
   --blue-dark:  #1A8BBF;
   --blue-light: #E8F7FD;
   --blue-mid:   #B3E3F5;
-  --red:        #E63946;   /* 録音ボタン */
-  --red-dark:   #C0392B;
+  --red:        #FF7F8A;   /* 録音ボタン・バッジ */
+  --red-dark:   #E85F6A;
   --red-light:  #FDECEA;
-  --red-mid:    #F5B8B8;
-  --sky:        #F0FAFF;   /* 背景 */
+  --red-mid:    #FFBFC4;
+  --sky:        #EAF6FF;   /* 背景 */
   --white:      #FFFFFF;
   --gray-100:   #F5F5F5;
   --gray-200:   #E8E8E8;
@@ -17,10 +17,15 @@
   --gray-800:   #2C2C2C;
   --pink:       #FF6B9D;   /* お気に入り */
   --pink-light: #FFF0F6;
-  --green:      #2DC653;   /* 済みマーク */
+  --green:      #2DC653;   /* 済みマーク（使用停止） */
   --green-light:#E8FAF0;
-  --orange:     #FF9500;   /* 練習中 */
+  --orange:     #FF9500;   /* 練習中（使用停止） */
   --orange-light:#FFF5E0;
+  /* 曲目ボタン専用 */
+  --item-bg:    #FFF9C4;
+  --item-border:#F3E5AB;
+  --item-text:  #5C4A00;
+  --item-sel-border: #FF7F8A; /* 選択中の赤枠 */
 }
 
 /* ===== リセット・ベース ===== */
@@ -115,8 +120,8 @@ svg { display: block; }
 }
 .status-circle--rec svg { color: var(--red); }
 @keyframes circle-pulse {
-  0%,100% { box-shadow: 0 0 0 0 rgba(230,57,70,0.3); }
-  50%      { box-shadow: 0 0 0 8px rgba(230,57,70,0); }
+  0%,100% { box-shadow: 0 0 0 0 rgba(255,127,138,0.3); }
+  50%      { box-shadow: 0 0 0 8px rgba(255,127,138,0); }
 }
 
 /* 右側テキストエリア */
@@ -135,12 +140,13 @@ svg { display: block; }
 }
 .status-idle-text { font-size: 16px; font-weight: 600; color: var(--blue-dark); opacity: 0.6; }
 
-/* 録音中ラッパー（縦並び：タイマー＋練習中） */
+/* 録音中ラッパー（1行中央表示） */
 .status-rec-wrap {
   display: none;
-  flex-direction: column;
-  gap: 3px;
+  flex-direction: row;
+  gap: 0;
   align-items: center;
+  justify-content: center;
   flex: 1;
 }
 
@@ -159,23 +165,18 @@ svg { display: block; }
   animation: blink 1s ease-in-out infinite;
 }
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
-.rec-timer { font-size: 20px; font-weight: 700; color: var(--red-dark); letter-spacing: 0.04em; }
+.rec-timer { font-size: 22px; font-weight: 700; color: var(--red-dark); letter-spacing: 0.04em; }
 .rec-label {
-  font-size: 11px; font-weight: 700;
+  font-size: 12px; font-weight: 700;
   color: var(--white);
   background: var(--red);
   border-radius: 99px;
-  padding: 2px 8px;
+  padding: 3px 10px;
 }
 
-/* 練習中表示（タイマーの下） */
+/* 練習中表示（非表示化） */
 .status-now {
-  display: flex;
-  flex-direction: column;
-  gap: 0px;
-  min-width: 0;
-  padding-left: 18px;
-  border-left: 2px solid var(--blue-mid);
+  display: none !important;
 }
 .now-label {
   display: none;
@@ -195,11 +196,11 @@ svg { display: block; }
   width: 100%;
   display: flex; align-items: center; justify-content: center; gap: 10px;
   padding: 26px 16px;
-  background: linear-gradient(135deg, var(--blue), var(--blue-dark));
+  background: var(--red);
   color: var(--white);
   font-size: 20px; font-weight: 700;
   border-radius: 20px;
-  box-shadow: 0 4px 16px rgba(41,171,226,0.4);
+  box-shadow: 0 4px 16px rgba(255,127,138,0.4);
   letter-spacing: 0.04em;
 }
 .btn-rec-start:active { opacity: 0.85; transform: scale(0.98); }
@@ -220,31 +221,31 @@ svg { display: block; }
   width: 100%;
   display: flex; align-items: center; gap: 14px;
   padding: 22px 18px;
-  background: var(--white);
-  border: 2px solid var(--gray-200);
+  background: var(--item-bg);
+  border: 2px solid var(--item-border);
   border-radius: 18px;
   font-size: 19px; font-weight: 600;
-  color: var(--gray-800);
+  color: var(--item-text);
   text-align: left;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 2px 8px rgba(243,229,171,0.4);
   transition: border-color 0.15s, background 0.15s, transform 0.1s;
   flex-shrink: 0;
 }
 .item-btn:active { transform: scale(0.97); }
 
-/* 練習中：オレンジ */
+/* 選択中：赤枠・黄色背景 */
 .item-btn.active {
-  background: var(--orange-light);
-  border-color: var(--orange);
+  background: var(--item-bg);
+  border-color: var(--item-sel-border);
   border-width: 3px;
-  color: #7A3D00;
-  box-shadow: 0 3px 12px rgba(255,149,0,0.25);
+  color: var(--item-text);
+  box-shadow: 0 3px 12px rgba(255,127,138,0.25);
 }
-/* 済み：グリーン */
+/* 済み：黄色統一（緑廃止） */
 .item-btn.done {
-  background: var(--green-light);
-  border-color: var(--green);
-  color: #0A5C26;
+  background: var(--item-bg);
+  border-color: var(--item-border);
+  color: var(--item-text);
 }
 .item-btn .item-icon {
   width: 28px; height: 28px;
@@ -725,8 +726,8 @@ svg { display: block; }
 .slide-to-stop {
   width: 100%;
   border-radius: 20px;
-  background: linear-gradient(135deg, var(--red), var(--red-dark));
-  box-shadow: 0 4px 16px rgba(230,57,70,0.4);
+  background: var(--red);
+  box-shadow: 0 4px 16px rgba(255,127,138,0.4);
   padding: 6px;
   user-select: none;
   -webkit-user-select: none;

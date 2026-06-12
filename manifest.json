@@ -1,7 +1,7 @@
 {
-  "name": "レッスン録音アプリ",
-  "short_name": "レッスン録音アプリ",
-  "description": "ピアノのレッスンを録音・管理するアプリ",
+  "name": "ぴあレコ",
+  "short_name": "ぴあレコ",
+  "description": "ぴあレコ — ピアノのレッスンを録音・管理するアプリ",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#ffffff",
