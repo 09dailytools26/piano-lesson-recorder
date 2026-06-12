@@ -456,18 +456,29 @@ function renderHomeItems() {
   const list = document.getElementById('items-list');
   list.innerHTML = '';
 
-  // ⑤ 曲目未登録時はサンプルを薄い色で表示（データ登録はしない）
-  if (state.items.length === 0 && state.recState !== 'recording') {
-    const samples = ['ハノン', 'ピアノテクニック', 'ブルグミュラー', '発表会曲'];
-    samples.forEach(name => {
-      const btn = document.createElement('button');
-      btn.className = 'item-btn item-btn--sample';
-      btn.disabled = true;
-      btn.innerHTML = `
-        <span class="item-icon"><svg viewBox="0 0 24 24" fill="currentColor" style="opacity:0.2"><circle cx="12" cy="12" r="8"/></svg></span>
-        <span class="item-name">${name}</span>
-      `;
-      list.appendChild(btn);
+  // 曲目未登録時は誘導メッセージを表示
+  if (state.items.length === 0) {
+    const guide = document.createElement('div');
+    guide.className = 'items-empty-guide';
+    guide.innerHTML = `
+      <div class="items-empty-icon">
+        <svg viewBox="0 0 80 120" width="64" height="96" xmlns="http://www.w3.org/2000/svg">
+          <path d="M44 10 C44 10 28 18 28 38 C28 52 38 60 44 62 L44 80 C44 80 30 76 24 88 C18 100 28 114 40 114 C52 114 58 104 58 96 C58 88 52 82 44 80 L44 14"
+            fill="none" stroke="#FF7F8A" stroke-width="5" stroke-linecap="round"/>
+          <ellipse cx="34" cy="108" rx="14" ry="9" fill="#FFD54F" stroke="#FF7F8A" stroke-width="2.5"/>
+          <line x1="44" y1="62" x2="62" y2="56" stroke="#29ABE2" stroke-width="4" stroke-linecap="round"/>
+          <line x1="44" y1="74" x2="62" y2="68" stroke="#29ABE2" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p class="items-empty-title">まず曲目登録から始めよう！</p>
+      <p class="items-empty-sub">練習する曲やテキストを登録すると、曲ごとに録音を管理できるよ♪</p>
+      <p class="items-empty-hint">右上の ✏️ マークからいつでも曲目を追加・変更できるよ</p>
+      <button class="items-empty-btn" id="btn-goto-items-from-home">今すぐ曲目登録！</button>
+    `;
+    list.appendChild(guide);
+    guide.querySelector('#btn-goto-items-from-home').addEventListener('click', () => {
+      renderItemsManage();
+      showPage('page-items');
     });
     return;
   }
@@ -1038,14 +1049,6 @@ async function confirmDeleteFav(id) {
 ====================================================== */
 async function loadItems() {
   state.items = await DB.getAllItems();
-  // 初回デフォルト項目
-  if (state.items.length === 0) {
-    const defaults = ['ハノン', 'ピアノテクニック', 'ブルグミュラー', '発表会曲'];
-    for (let i = 0; i < defaults.length; i++) {
-      await DB.saveItem({ name: defaults[i], measure_bar: false, sort_order: i });
-    }
-    state.items = await DB.getAllItems();
-  }
 }
 
 function renderItemsManage() {

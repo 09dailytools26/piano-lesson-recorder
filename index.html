@@ -6,6 +6,9 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>ぴあレコ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -29,21 +32,22 @@
 
   <!-- ステータスエリア（固定高さ・常時表示） -->
   <div class="status-area">
-    <!-- 丸アイコン：常時表示・録音中は赤 -->
-    <div class="status-circle" id="status-circle">
-      <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
-    </div>
     <!-- 右側テキストエリア：待機中テキスト / 録音中タイマー+練習中を切替 -->
     <div class="status-right">
       <!-- 待機中 -->
       <div class="status-idle" id="status-idle">
+        <div class="status-circle">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+        </div>
         <span class="status-idle-text">録音待機中</span>
       </div>
-      <!-- 録音中：タイマー＋練習中情報を縦並び -->
+      <!-- 録音中：1行中央 -->
       <div class="status-rec-wrap" id="status-rec-wrap">
         <div class="status-rec" id="status-rec">
-          <span class="rec-dot"></span>
-          <span class="rec-timer" id="rec-timer">00:00:00</span>
+          <div class="status-circle" id="status-circle">
+            <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+          </div>
+          <span class="rec-timer" id="rec-timer">00:00</span>
           <span class="rec-label">録音中</span>
         </div>
         <div class="status-now empty" id="status-now">
@@ -186,7 +190,7 @@
   </header>
   <div class="items-guide">
     <p class="items-guide-text">教本名や曲名を登録してください</p>
-    <p class="items-guide-examples">「ハノン」、「ピアノテクニック」、「ブルグミュラー」、「発表会の曲」などと入れてね。曲目ごとに再生できるようになるよ。</p>
+    <p class="items-guide-examples">「ハノン」「ピアノテクニック」「ブルグミュラー」「発表会の曲」などと入れてね。曲目ごとに再生できるようになるよ♪</p>
   </div>
   <div id="items-manage-list" class="items-manage-list"></div>
 </div>
