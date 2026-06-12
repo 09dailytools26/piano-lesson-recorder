@@ -51,8 +51,8 @@ svg { display: block; }
 .header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: 6px;
+  padding: 10px 12px;
   background: var(--sky);
   border-bottom: 2px solid var(--blue-mid);
   position: sticky;
@@ -61,31 +61,34 @@ svg { display: block; }
 }
 .header-title {
   font-family: 'Nunito', "Hiragino Marugothic ProN", "Hiragino Sans", sans-serif;
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 900;
   flex: 1;
+  min-width: 0;
   color: var(--blue-dark);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .header-clef {
-  width: 22px;
-  height: 33px;
+  width: 18px;
+  height: 27px;
   flex-shrink: 0;
   filter: drop-shadow(0 1px 3px rgba(255,127,138,0.3));
 }
-.header-actions { display: flex; gap: 6px; }
+.header-actions { display: flex; gap: 4px; }
 .icon-btn {
-  width: 52px; height: 52px;
+  width: 46px; height: 46px;
   display: flex; align-items: center; justify-content: center;
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--white);
   color: var(--blue-dark);
   border: 2px solid var(--blue-dark);
 }
-.icon-btn svg { width: 26px; height: 26px; }
+.icon-btn svg { width: 22px; height: 22px; }
 .icon-btn:active { background: var(--blue-light); }
 .icon-btn.disabled { opacity: 0.3; pointer-events: none; }
 .text-btn {
@@ -103,6 +106,9 @@ svg { display: block; }
 /* ページ背景：上下青・中央白のゾーン構成はpage-homeで管理 */
 #page-home {
   background: var(--sky);
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
 }
 .items-list-zone {
   background: var(--white);
@@ -227,6 +233,7 @@ svg { display: block; }
 /* 項目リスト */
 .items-list {
   flex: 1;
+  min-height: 0;
   padding: 10px 16px;
   display: flex;
   flex-direction: column;
@@ -288,9 +295,9 @@ svg { display: block; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 40px 24px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 16px 24px;
   text-align: center;
 }
 .items-empty-icon {
@@ -313,12 +320,12 @@ svg { display: block; }
   line-height: 1.7;
 }
 .items-empty-btn {
-  margin-top: 8px;
-  padding: 16px 32px;
+  margin-top: 4px;
+  padding: 12px 24px;
   background: #FFFDE7;
   color: #7A5800;
-  font-size: 17px; font-weight: 700;
-  border-radius: 16px;
+  font-size: 15px; font-weight: 700;
+  border-radius: 14px;
   border: 2px solid #E6A817;
   box-shadow: 0 2px 8px rgba(230,168,23,0.2);
   letter-spacing: 0.03em;
