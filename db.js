@@ -1,276 +1,1157 @@
-/* db.js — IndexedDB操作 */
+/* app.js — ピアノレッスン録音アプリ メインロジック */
 'use strict';
 
-const DB_NAME = 'PianoLessonDB';
-const DB_VERSION = 1;
+/* ======================================================
+   状態管理
+====================================================== */
+const state = {
+  // 録音
+  recState: 'idle',       // 'idle' | 'recording'
+  mediaRecorder: null,
+  audioChunks: [],
+  recStartTime: null,
+  recTimerInterval: null,
+  activeItemId: null,     // 現在録音中の項目ID
+  currentSegmentStart: null, // 現在区間の開始時刻(Date)
+  markers: [],            // [{itemId, startTime(Date)}]
+  recStopTime: null,
+  holdTimer: null,
+  holdInterval: null,
+  wakeLock: null,        // Wake Lock API
+  noSleepVideo: null,    // iOS用スリープ抑止動画
 
-let _db = null;
+  // 再生
+  audioElement: null,
+  currentRecording: null,
+  currentSegment: null,   // 再生対象のセグメント（項目再生時）
+  isPlaying: false,
+  silenceSkip: false,
+  seekUpdateInterval: null,
+  favStartSec: null,
+  favEndSec: null,
 
-function openDB() {
-  if (_db) return Promise.resolve(_db);
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-
-      // ITEMS
-      if (!db.objectStoreNames.contains('items')) {
-        const s = db.createObjectStore('items', { keyPath: 'id' });
-        s.createIndex('sort_order', 'sort_order', { unique: false });
-      }
-      // RECORDINGS
-      if (!db.objectStoreNames.contains('recordings')) {
-        const s = db.createObjectStore('recordings', { keyPath: 'id' });
-        s.createIndex('lesson_date', 'lesson_date', { unique: false });
-      }
-      // AUDIO_BLOBS
-      if (!db.objectStoreNames.contains('audio_blobs')) {
-        db.createObjectStore('audio_blobs', { keyPath: 'key' });
-      }
-      // SEGMENTS
-      if (!db.objectStoreNames.contains('segments')) {
-        const s = db.createObjectStore('segments', { keyPath: 'id' });
-        s.createIndex('recording_id', 'recording_id', { unique: false });
-        s.createIndex('item_id', 'item_id', { unique: false });
-      }
-      // FAVORITES
-      if (!db.objectStoreNames.contains('favorites')) {
-        const s = db.createObjectStore('favorites', { keyPath: 'id' });
-        s.createIndex('recording_id', 'recording_id', { unique: false });
-      }
-      // BAR_INDEX (将来実装用 — スキーマのみ定義)
-      if (!db.objectStoreNames.contains('bar_index')) {
-        const s = db.createObjectStore('bar_index', { keyPath: 'id' });
-        s.createIndex('segment_id', 'segment_id', { unique: false });
-        s.createIndex('bar_number', 'bar_number', { unique: false });
-      }
-    };
-
-    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
-    req.onerror = e => reject(e.target.error);
-  });
-}
-
-function uuid() {
-  return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
-    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
-}
-
-function tx(stores, mode = 'readonly') {
-  return _db.transaction(stores, mode);
-}
-
-function promisifyRequest(req) {
-  return new Promise((res, rej) => {
-    req.onsuccess = e => res(e.target.result);
-    req.onerror = e => rej(e.target.error);
-  });
-}
-
-/* ---- ITEMS ---- */
-const DB = {
-  async getAllItems() {
-    await openDB();
-    return new Promise((res, rej) => {
-      const t = tx('items');
-      const index = t.objectStore('items').index('sort_order');
-      const req = index.getAll();
-      req.onsuccess = e => res(e.target.result);
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  async saveItem(item) {
-    await openDB();
-    if (!item.id) {
-      item.id = uuid();
-      item.created_at = new Date().toISOString();
-    }
-    const t = tx('items', 'readwrite');
-    return promisifyRequest(t.objectStore('items').put(item));
-  },
-
-  async deleteItem(id) {
-    await openDB();
-    const t = tx('items', 'readwrite');
-    return promisifyRequest(t.objectStore('items').delete(id));
-  },
-
-  /* ---- RECORDINGS ---- */
-  async getAllRecordings() {
-    await openDB();
-    return new Promise((res, rej) => {
-      const t = tx('recordings');
-      const req = t.objectStore('recordings').getAll();
-      req.onsuccess = e => {
-        const arr = e.target.result;
-        arr.sort((a, b) => b.lesson_date.localeCompare(a.lesson_date));
-        res(arr);
-      };
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  async getRecording(id) {
-    await openDB();
-    const t = tx('recordings');
-    return promisifyRequest(t.objectStore('recordings').get(id));
-  },
-
-  async saveRecording(rec) {
-    await openDB();
-    if (!rec.id) {
-      rec.id = uuid();
-      rec.created_at = new Date().toISOString();
-    }
-    const t = tx('recordings', 'readwrite');
-    return promisifyRequest(t.objectStore('recordings').put(rec));
-  },
-
-  async deleteRecording(id) {
-    await openDB();
-    // 関連データも一括削除
-    const segments = await this.getSegmentsByRecording(id);
-    const rec = await this.getRecording(id);
-    const t = _db.transaction(['recordings', 'audio_blobs', 'segments', 'favorites'], 'readwrite');
-    t.objectStore('recordings').delete(id);
-    if (rec && rec.audio_blob_key) {
-      t.objectStore('audio_blobs').delete(rec.audio_blob_key);
-    }
-    for (const seg of segments) {
-      t.objectStore('segments').delete(seg.id);
-    }
-    return new Promise((res, rej) => {
-      t.oncomplete = () => res();
-      t.onerror = e => rej(e.target.error);
-    });
-  },
-
-  /* ---- AUDIO_BLOBS ---- */
-  async saveAudioBlob(key, blob) {
-    await openDB();
-    const t = tx('audio_blobs', 'readwrite');
-    return promisifyRequest(t.objectStore('audio_blobs').put({ key, blob }));
-  },
-
-  async getAudioBlob(key) {
-    await openDB();
-    const t = tx('audio_blobs');
-    const result = await promisifyRequest(t.objectStore('audio_blobs').get(key));
-    return result ? result.blob : null;
-  },
-
-  /* ---- SEGMENTS ---- */
-  async getSegmentsByRecording(recordingId) {
-    await openDB();
-    return new Promise((res, rej) => {
-      const t = tx('segments');
-      const index = t.objectStore('segments').index('recording_id');
-      const req = index.getAll(recordingId);
-      req.onsuccess = e => res(e.target.result);
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  async getSegmentsByItem(itemId) {
-    await openDB();
-    return new Promise((res, rej) => {
-      const t = tx('segments');
-      const index = t.objectStore('segments').index('item_id');
-      const req = index.getAll(itemId);
-      req.onsuccess = e => res(e.target.result);
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  async saveSegment(seg) {
-    await openDB();
-    if (!seg.id) {
-      seg.id = uuid();
-      seg.created_at = new Date().toISOString();
-    }
-    const t = tx('segments', 'readwrite');
-    return promisifyRequest(t.objectStore('segments').put(seg));
-  },
-
-  async updateSegmentLastPosition(segId, posSeconds) {
-    await openDB();
-    const t = tx('segments', 'readwrite');
-    const store = t.objectStore('segments');
-    return new Promise((res, rej) => {
-      const req = store.get(segId);
-      req.onsuccess = e => {
-        const seg = e.target.result;
-        if (seg) {
-          seg.last_position_seconds = posSeconds;
-          const put = store.put(seg);
-          put.onsuccess = () => res();
-          put.onerror = e2 => rej(e2.target.error);
-        } else res();
-      };
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  async updateRecordingLastPosition(recId, posSeconds) {
-    await openDB();
-    const t = tx('recordings', 'readwrite');
-    const store = t.objectStore('recordings');
-    return new Promise((res, rej) => {
-      const req = store.get(recId);
-      req.onsuccess = e => {
-        const rec = e.target.result;
-        if (rec) {
-          rec.last_position_seconds = posSeconds;
-          const put = store.put(rec);
-          put.onsuccess = () => res();
-          put.onerror = e2 => rej(e2.target.error);
-        } else res();
-      };
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  /* ---- FAVORITES ---- */
-  async getAllFavorites() {
-    await openDB();
-    return new Promise((res, rej) => {
-      const t = tx('favorites');
-      const req = t.objectStore('favorites').getAll();
-      req.onsuccess = e => {
-        const arr = e.target.result;
-        arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
-        res(arr);
-      };
-      req.onerror = e => rej(e.target.error);
-    });
-  },
-
-  async saveFavorite(fav) {
-    await openDB();
-    if (!fav.id) {
-      fav.id = uuid();
-      fav.created_at = new Date().toISOString();
-    }
-    const t = tx('favorites', 'readwrite');
-    return promisifyRequest(t.objectStore('favorites').put(fav));
-  },
-
-  async deleteFavorite(id) {
-    await openDB();
-    const t = tx('favorites', 'readwrite');
-    return promisifyRequest(t.objectStore('favorites').delete(id));
-  },
-
-  /* ---- 設定 (localStorageで軽量管理) ---- */
-  getSettings() {
-    try {
-      return JSON.parse(localStorage.getItem('plr_settings') || '{}');
-    } catch { return {}; }
-  },
-
-  saveSettings(s) {
-    localStorage.setItem('plr_settings', JSON.stringify(s));
-  }
+  // データ
+  items: [],
+  editingItemId: null,
+  measureBarChecked: false,
 };
+
+/* ======================================================
+   ユーティリティ
+====================================================== */
+function fmtTime(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+  return `${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+}
+
+function fmtDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const week = ['日','月','火','水','木','金','土'];
+  return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${week[d.getDay()]})`;
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function showToast(msg, dur = 2000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => el.classList.add('hidden'), dur);
+}
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
+
+/* ======================================================
+   ページ遷移
+====================================================== */
+function initNavigation() {
+  // タブ切替（1回だけ登録）
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    });
+  });
+
+  document.getElementById('btn-goto-play').addEventListener('click', async () => {
+    showPage('page-play');
+    await renderPlayPage();
+  });
+  document.getElementById('btn-goto-items').addEventListener('click', () => {
+    renderItemsManage();
+    showPage('page-items');
+  });
+  document.getElementById('btn-goto-settings').addEventListener('click', () => {
+    renderSettings();
+    showPage('page-settings');
+  });
+  document.getElementById('btn-back-play').addEventListener('click', () => showPage('page-home'));
+  document.getElementById('btn-back-player').addEventListener('click', () => {
+    stopAudio();
+    showPage('page-play');
+  });
+  document.getElementById('btn-back-items').addEventListener('click', () => showPage('page-home'));
+  document.getElementById('btn-back-settings').addEventListener('click', () => showPage('page-home'));
+}
+
+/* ======================================================
+   録音機能
+====================================================== */
+function initRecording() {
+  document.getElementById('btn-rec-start').addEventListener('click', startRecording);
+
+  // スライドで録音終了
+  initSlideToStop();
+}
+
+function initSlideToStop() {
+  const wrap  = document.getElementById('slide-to-stop');
+  const thumb = document.getElementById('slide-thumb');
+  const label = document.getElementById('slide-label');
+  let dragging = false;
+  let startX = 0;
+  let currentX = 0;
+  let trackWidth = 0;
+  const thumbW = 64; // thumbの幅px
+
+  function getTrackWidth() {
+    return wrap.offsetWidth - thumbW - 8; // 8=左右padding
+  }
+
+  function onStart(e) {
+    if (state.recState !== 'recording') return;
+    trackWidth = getTrackWidth();
+    if (trackWidth <= 0) return; // レイアウト未確定時は無視
+    dragging = true;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
+    thumb.style.transition = 'none';
+    e.preventDefault();
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    currentX = Math.max(0, Math.min(trackWidth, x - startX));
+    thumb.style.transform = `translateX(${currentX}px)`;
+    const ratio = currentX / trackWidth;
+    label.style.opacity = 1 - ratio * 1.5;
+    if (ratio >= 0.9) {
+      thumb.style.background = 'var(--red-dark)';
+    } else {
+      thumb.style.background = '';
+    }
+    e.preventDefault();
+  }
+
+  function onEnd() {
+    if (!dragging) return;
+    dragging = false;
+    const ratio = currentX / trackWidth;
+    if (ratio >= 0.85) {
+      // 完了：右端まで到達
+      thumb.style.transition = 'transform 0.15s';
+      thumb.style.transform = `translateX(${trackWidth}px)`;
+      setTimeout(() => {
+        stopRecording();
+      }, 150);
+    } else {
+      // キャンセル：元に戻す
+      thumb.style.transition = 'transform 0.3s';
+      thumb.style.transform = 'translateX(0)';
+      label.style.opacity = '1';
+      thumb.style.background = '';
+    }
+    currentX = 0;
+  }
+
+  thumb.addEventListener('mousedown', onStart);
+  thumb.addEventListener('touchstart', onStart, { passive: false });
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchend', onEnd);
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // 対応フォーマット選択（iOS Safari対応）
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+
+    state.mediaRecorder = mimeType
+      ? new MediaRecorder(stream, { mimeType })
+      : new MediaRecorder(stream);
+
+    state.audioChunks = [];
+    state.recStartTime = Date.now();
+    state.markers = [];
+    state.activeItemId = null;
+    state.currentSegmentStart = null;
+
+    state.mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) state.audioChunks.push(e.data);
+    };
+    state.mediaRecorder.onstop = onRecordingStopped;
+    state.mediaRecorder.start(1000);
+
+    state.recState = 'recording';
+    updateRecordingUI();
+
+    // タイマー開始
+    state.recTimerInterval = setInterval(() => {
+      const elapsed = (Date.now() - state.recStartTime) / 1000;
+      document.getElementById('rec-timer').textContent = fmtTime(elapsed);
+    }, 500);
+
+    // === 画面スリープ抑止（3層対策） ===
+    acquireWakeLock();
+    startNoSleep();
+    startVisibilityWatcher();
+
+  } catch (err) {
+    console.error(err);
+    if (err.name === 'NotAllowedError') {
+      showToast('マイクの許可が必要です');
+    } else {
+      showToast('録音を開始できませんでした');
+    }
+  }
+}
+
+async function stopRecording() {
+  if (!state.mediaRecorder || state.recState !== 'recording') return;
+  // 終了時刻をここで確定（onstop発火前に最後の区間を閉じる）
+  state.recStopTime = Date.now();
+  state.mediaRecorder.stop();
+  state.mediaRecorder.stream.getTracks().forEach(t => t.stop());
+  clearInterval(state.recTimerInterval);
+
+  // スリープ抑止を解除
+  releaseWakeLock();
+  stopNoSleep();
+  stopVisibilityWatcher();
+}
+
+/* -------------------------------------------------------
+   Wake Lock API（対応端末のみ有効・失敗しても録音継続）
+------------------------------------------------------- */
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request('screen');
+    console.log('[WakeLock] 取得成功');
+    // ページ復帰時に再取得（iOSはバックグラウンドで自動解放される）
+    state.wakeLock.addEventListener('release', () => {
+      console.log('[WakeLock] 解放された');
+    });
+  } catch (e) {
+    console.log('[WakeLock] 取得失敗（録音は継続）:', e.message);
+  }
+}
+
+function releaseWakeLock() {
+  if (state.wakeLock) {
+    state.wakeLock.release().catch(() => {});
+    state.wakeLock = null;
+    console.log('[WakeLock] 解放');
+  }
+}
+
+/* -------------------------------------------------------
+   No-sleep動画ループ（iOS Safari/PWA用スリープ抑止）
+   ユーザー操作コールバック内で呼ぶ必要あり
+------------------------------------------------------- */
+function startNoSleep() {
+  if (state.noSleepVideo) return;
+  // 1px透明なwebm動画をBase64で埋め込み（ループ再生でスリープを抑止）
+  const video = document.createElement('video');
+  video.setAttribute('playsinline', '');
+  video.setAttribute('muted', '');
+  video.loop = true;
+  video.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1';
+  // 最小限のMP4（無音・1フレーム・Base64）
+  video.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAA' +
+    'uttZGF0AAACrQYF//+p3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE0OCByMjY0MyA1YzY1NzA0IC0gSC4yNjQv' +
+    'TVBFR0FWQyBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMTUgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY' +
+    '0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0xIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDM6MHgxMTMgbWU9a' +
+    'GV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiByYXRlX3RvbD0' +
+    'xLjAgcmNfbG9va2FoZWFkPTQwIHZidl9tYXhyYXRlPTc2OCB2YnZfYnVmc2l6ZT0zMDAwIGNyZj0yMy4wIHFjb21wPT' +
+    'AuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6MS4wMAAAAAAyZYiEB//qnuRgI' +
+    '6lAAPCwCdgABbgCbBQAABtABsAAAMCAAATkqZHye8yMAAAAGUGaAWQAABVgAAADALkAAAA+QZoEbCQAABVAAAADAOUAA' +
+    'AAkQZoHbCQAABVAAAADAOUAAAArQZoKbCQAABVAAAADAOUAAAAkQZoNbCQAABVAAAADAOUAAAArQZoQbCQAABVAAAADAO' +
+    'UAAAAkQZoTbCQAABVAAAADAOUAAAArQZoWbCQAABVAAAADAOUAAAAkQZoZbCQAABVAAAADAOUAAAArQZocbCQAABVAAAA' +
+    'DAOUAAAAkQZofbCQAABVAAAADAOUAAAArQZoibCQAABVAAAADAOUAAAAkQZolbCQAABVAAAADAOUAAAArQZoobCQAABVA' +
+    'AAADAOUAAAAkQZorbCQAABVAAAADAOUAAAArQZoubCQAABVAAAADAOUAAAAkQZoxbCQAABVAAAADAOUAAAArQZo0bCQAA' +
+    'BVAAAADAOUAAAAkQZo3bCQAABVAAAADAOUAAAArQZo6bCQAABVAAAADAOUAAAAkQZo9bCQAABVAAAADAOUAAAArQZpAbC' +
+    'QAABVAAAADAOUAAABIQAAAA';
+  document.body.appendChild(video);
+  video.play().then(() => {
+    console.log('[NoSleep] 動画再生開始');
+  }).catch(e => {
+    console.log('[NoSleep] 動画再生失敗:', e.message);
+  });
+  state.noSleepVideo = video;
+}
+
+function stopNoSleep() {
+  if (state.noSleepVideo) {
+    state.noSleepVideo.pause();
+    state.noSleepVideo.remove();
+    state.noSleepVideo = null;
+    console.log('[NoSleep] 停止');
+  }
+}
+
+/* -------------------------------------------------------
+   visibilitychange ウォッチャー
+   スリープ復帰後にタイマーを補正・WakeLockを再取得
+------------------------------------------------------- */
+let _visHandler = null;
+function startVisibilityWatcher() {
+  stopVisibilityWatcher();
+  _visHandler = async () => {
+    if (document.visibilityState === 'visible' && state.recState === 'recording') {
+      console.log('[Visibility] 復帰検知 - タイマー補正・WakeLock再取得');
+      // WakeLockが解放されていたら再取得
+      if (!state.wakeLock || state.wakeLock.released) {
+        await acquireWakeLock();
+      }
+    }
+  };
+  document.addEventListener('visibilitychange', _visHandler);
+}
+
+function stopVisibilityWatcher() {
+  if (_visHandler) {
+    document.removeEventListener('visibilitychange', _visHandler);
+    _visHandler = null;
+  }
+}
+
+async function onRecordingStopped() {
+  const stopTime = state.recStopTime || Date.now();
+  const totalSec = (stopTime - state.recStartTime) / 1000;
+  const blob = new Blob(state.audioChunks, {
+    type: state.mediaRecorder.mimeType || 'audio/webm'
+  });
+
+  // 最後のセグメントを閉じる（stopRecordingで確定した時刻を使用）
+  if (state.activeItemId && state.currentSegmentStart) {
+    state.markers.push({
+      itemId: state.activeItemId,
+      startTime: state.currentSegmentStart,
+      endTime: stopTime
+    });
+  }
+
+  const blobKey = 'audio_' + Date.now();
+  await DB.saveAudioBlob(blobKey, blob);
+
+  const recId = 'rec_' + Date.now();
+  const rec = {
+    id: recId,
+    lesson_date: todayStr(),
+    audio_blob_key: blobKey,
+    duration_seconds: totalSec,
+    last_position_seconds: 0,
+    created_at: new Date().toISOString()
+  };
+  await DB.saveRecording(rec);
+
+  // セグメント保存
+  for (let i = 0; i < state.markers.length; i++) {
+    const m = state.markers[i];
+    const startSec = (m.startTime - state.recStartTime) / 1000;
+    const endSec = m.endTime ? (m.endTime - state.recStartTime) / 1000 : totalSec;
+    await DB.saveSegment({
+      recording_id: recId,
+      item_id: m.itemId,
+      start_seconds: startSec,
+      end_seconds: endSec,
+      last_position_seconds: 0
+    });
+  }
+
+  state.recState = 'idle';
+  state.activeItemId = null;
+  state.currentSegmentStart = null;
+  state.markers = [];
+
+  updateRecordingUI();
+  showToast('保存しました');
+}
+
+function updateRecordingUI() {
+  const isRec = state.recState === 'recording';
+
+  // 録音開始ボタン表示切替
+  document.getElementById('btn-rec-start').classList.toggle('hidden', isRec);
+
+  // ステータスエリア切替（固定高さ・レイアウト不変）
+  document.getElementById('status-idle').style.display     = isRec ? 'none' : 'flex';
+  document.getElementById('status-rec-wrap').style.display = isRec ? 'flex' : 'none';
+  // 丸アイコン：録音中は赤、待機中は青
+  const circle = document.getElementById('status-circle');
+  if (circle) circle.classList.toggle('status-circle--rec', isRec);
+
+  if (!isRec) {
+    // 待機中に戻したとき練習中表示をリセット
+    const nowEl = document.getElementById('status-now');
+    nowEl.classList.add('empty');
+    document.getElementById('now-banner-name').textContent = '曲目を選んでください';
+    document.getElementById('now-banner-since').textContent = '';
+  }
+
+  // スライドボタン 有効/無効切替
+  const slideWrap = document.getElementById('slide-to-stop');
+  if (slideWrap) {
+    slideWrap.classList.toggle('slide-disabled', !isRec);
+    // ラベル・サム位置リセット
+    const thumb = document.getElementById('slide-thumb');
+    const label = document.getElementById('slide-label');
+    if (thumb) { thumb.style.transform = 'translateX(0)'; thumb.style.background = ''; }
+    if (label) { label.style.opacity = '1'; }
+  }
+
+  // ナビボタン無効化
+  ['btn-goto-play','btn-goto-items','btn-goto-settings'].forEach(id => {
+    document.getElementById(id).classList.toggle('disabled', isRec);
+  });
+
+  renderHomeItems();
+}
+
+/* ======================================================
+   項目ボタン（ホーム）
+====================================================== */
+function renderHomeItems() {
+  const list = document.getElementById('items-list');
+  list.innerHTML = '';
+
+  // 曲目未登録時は曲目管理への誘導メッセージを表示
+  if (state.items.length === 0 && state.recState !== 'recording') {
+    const guide = document.createElement('div');
+    guide.className = 'items-empty-guide';
+    guide.innerHTML = `
+      <p class="items-empty-title">まずは教本・曲名を登録しましょう！</p>
+      <p class="items-empty-desc">右上の ✏️ ボタン（曲目管理）から<br>「ハノン」「ブルグミュラー」など<br>練習している教本や曲名を追加してください。</p>
+      <button class="items-empty-btn" id="btn-goto-items-guide">✏️ 曲目を追加する</button>
+    `;
+    list.appendChild(guide);
+    document.getElementById('btn-goto-items-guide').addEventListener('click', () => {
+      renderItemsManage();
+      showPage('page-items');
+    });
+    return;
+  }
+
+  state.items.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'item-btn';
+    btn.dataset.id = item.id;
+
+    const iconEl = document.createElement('span');
+    iconEl.className = 'item-icon';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'item-name';
+    nameEl.textContent = item.name;
+
+    if (state.recState === 'recording') {
+      if (item.id === state.activeItemId) {
+        btn.classList.add('active');
+        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+      } else if (state.markers.some(m => m.itemId === item.id)) {
+        btn.classList.add('done');
+        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+      } else {
+        iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" style="opacity:0.25"><circle cx="12" cy="12" r="8"/></svg>';
+      }
+      btn.addEventListener('click', () => tapItemButton(item.id));
+    } else {
+      iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" style="opacity:0.2"><circle cx="12" cy="12" r="8"/></svg>';
+    }
+
+    btn.appendChild(iconEl);
+    btn.appendChild(nameEl);
+    list.appendChild(btn);
+  });
+}
+
+function tapItemButton(itemId) {
+  if (state.recState !== 'recording') return;
+
+  // 同一項目の連続タップ無視
+  if (itemId === state.activeItemId) {
+    const btn = document.querySelector(`.item-btn[data-id="${itemId}"]`);
+    if (btn) {
+      btn.classList.add('item-btn-shake');
+      setTimeout(() => btn.classList.remove('item-btn-shake'), 350);
+    }
+    return;
+  }
+
+  const now = Date.now();
+
+  // 前の区間を閉じる
+  if (state.activeItemId && state.currentSegmentStart) {
+    state.markers.push({
+      itemId: state.activeItemId,
+      startTime: state.currentSegmentStart,
+      endTime: now
+    });
+  }
+
+  // 新しい区間を開始
+  state.activeItemId = itemId;
+  state.currentSegmentStart = now;
+
+  // いま練習中バナー更新
+  const elapsed = (now - state.recStartTime) / 1000;
+  const item = state.items.find(i => i.id === itemId);
+  document.getElementById('now-banner-name').textContent = item ? item.name : '';
+  document.getElementById('now-banner-since').textContent = fmtTime(elapsed) + ' から';
+  const nowEl = document.getElementById('status-now');
+  nowEl.classList.remove('empty');
+
+  renderHomeItems();
+}
+
+/* ======================================================
+   再生画面
+====================================================== */
+async function renderPlayPage() {
+  const recordings = await DB.getAllRecordings();
+  const items = state.items;
+
+  // 録音日タブ
+  const datePane = document.getElementById('tab-date');
+  datePane.innerHTML = '';
+
+  if (recordings.length === 0) {
+    datePane.innerHTML = '<div class="empty-state">録音がまだありません</div>';
+  } else {
+    // 削除ツールバー
+    const toolbar = document.createElement('div');
+    toolbar.className = 'delete-toolbar';
+    toolbar.innerHTML = `
+      <span class="delete-toolbar-count" id="delete-count">0件選択中</span>
+      <button class="delete-toolbar-btn" id="btn-delete-selected" disabled aria-label="選択した録音を削除">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6"/><path d="M14 11v6"/>
+          <path d="M9 6V4h6v2"/>
+        </svg>
+        削除
+      </button>
+    `;
+    datePane.appendChild(toolbar);
+
+    const selectedIds = new Set();
+
+    function updateToolbar() {
+      const count = selectedIds.size;
+      document.getElementById('delete-count').textContent = count + '件選択中';
+      const btn = document.getElementById('btn-delete-selected');
+      btn.disabled = count === 0;
+    }
+
+    for (const rec of recordings) {
+      const segs = await DB.getSegmentsByRecording(rec.id);
+      const itemNames = [...new Set(
+        segs.map(s => items.find(i => i.id === s.item_id)?.name).filter(Boolean)
+      )].join('・');
+
+      const row = document.createElement('div');
+      row.className = 'list-item';
+      row.dataset.recId = rec.id;
+      row.innerHTML = `
+        <label class="rec-checkbox" onclick="event.stopPropagation()">
+          <input type="checkbox" class="rec-check-input" data-id="${rec.id}" aria-label="${fmtDate(rec.lesson_date)}を選択">
+          <span class="rec-check-box"></span>
+        </label>
+        <div class="list-item-main">
+          <div class="list-item-title">${fmtDate(rec.lesson_date)}</div>
+          <div class="list-item-sub">${itemNames || '（項目なし）'} · ${fmtTime(rec.duration_seconds)}</div>
+        </div>
+        <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+      `;
+
+      const checkbox = row.querySelector('.rec-check-input');
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) {
+          selectedIds.add(rec.id);
+          row.classList.add('selected');
+        } else {
+          selectedIds.delete(rec.id);
+          row.classList.remove('selected');
+        }
+        updateToolbar();
+      });
+
+      // チェックボックス以外のタップで再生
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.rec-checkbox')) return;
+        openPlayer(rec, null, 'date');
+      });
+
+      datePane.appendChild(row);
+    }
+
+    // 削除ボタンのイベント登録
+    document.getElementById('btn-delete-selected').addEventListener('click', async () => {
+      if (selectedIds.size === 0) return;
+      const count = selectedIds.size;
+      document.getElementById('confirm-title').textContent = '録音を削除';
+      document.getElementById('confirm-msg').textContent =
+        '選択した' + count + '件の録音を削除しますか？\n関連する区間・お気に入りデータも削除されます。';
+      showModal('modal-confirm');
+      const okBtn = document.getElementById('btn-confirm-ok');
+      const cancelBtn = document.getElementById('btn-confirm-cancel');
+      const cleanup = () => {
+        hideModal('modal-confirm');
+        okBtn.onclick = null;
+        cancelBtn.onclick = null;
+      };
+      okBtn.onclick = async () => {
+        cleanup();
+        for (const id of selectedIds) {
+          await DB.deleteRecording(id);
+        }
+        showToast(count + '件の録音を削除しました');
+        await renderPlayPage();  // 全タブ（録音日・曲目・お気に入り）を再描画
+      };
+      cancelBtn.onclick = cleanup;
+    });
+  }
+
+  // 曲目別タブ（ボタン形式）
+  const itemPane = document.getElementById('tab-item');
+  itemPane.innerHTML = '';
+  const itemGrid = document.createElement('div');
+  itemGrid.className = 'item-tab-grid';
+  let hasItem = false;
+  for (const item of items) {
+    const segs = await DB.getSegmentsByItem(item.id);
+    if (segs.length === 0) continue;
+    hasItem = true;
+    const btn = document.createElement('button');
+    btn.className = 'item-tab-btn';
+    btn.innerHTML = `
+      <span style="flex:1;text-align:left">${item.name}</span>
+      <span class="item-tab-count">${segs.length}件</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
+    `;
+    btn.addEventListener('click', () => openItemHistory(item));
+    itemGrid.appendChild(btn);
+  }
+  if (!hasItem) {
+    itemPane.innerHTML = '<div class="empty-state">録音がまだありません</div>';
+  } else {
+    itemPane.appendChild(itemGrid);
+  }
+
+  // お気に入りタブ
+  await renderFavTab();
+
+}
+
+async function renderFavTab() {
+  const favPane = document.getElementById('tab-fav');
+  const favs = await DB.getAllFavorites();
+  favPane.innerHTML = '';
+  if (favs.length === 0) {
+    favPane.innerHTML = '<div class="empty-state">お気に入りはまだありません<br>再生中に★ボタンで登録できます</div>';
+    return;
+  }
+  for (const fav of favs) {
+    const rec = await DB.getRecording(fav.recording_id);
+    const row = document.createElement('div');
+    row.className = 'list-item';
+    row.innerHTML = `
+      <div class="list-item-main">
+        <div class="list-item-title">${fav.title}</div>
+        <div class="list-item-sub">${rec ? fmtDate(rec.lesson_date) : ''} · ${fmtTime(fav.start_seconds)}〜${fmtTime(fav.end_seconds)}</div>
+      </div>
+      <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+    `;
+    row.addEventListener('click', () => {
+      if (rec) openPlayer(rec, null, 'fav', fav.start_seconds, fav.end_seconds);
+    });
+    // 長押しで削除
+    let delTimer;
+    row.addEventListener('touchstart', () => {
+      delTimer = setTimeout(() => confirmDeleteFav(fav.id), 700);
+    }, { passive: true });
+    row.addEventListener('touchend', () => clearTimeout(delTimer));
+    row.addEventListener('touchcancel', () => clearTimeout(delTimer));
+    favPane.appendChild(row);
+  }
+}
+
+async function openItemHistory(item) {
+  const itemPane = document.getElementById('tab-item');
+  itemPane.innerHTML = '';
+
+  // 戻るヘッダー
+  const header = document.createElement('div');
+  header.className = 'section-header';
+  header.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>${item.name}`;
+  header.addEventListener('click', () => renderPlayPage());
+  itemPane.appendChild(header);
+
+  // DBから最新のセグメントを毎回取得（続きから再生の位置が正しく反映される）
+  const segs = await DB.getSegmentsByItem(item.id);
+  if (segs.length === 0) {
+    itemPane.innerHTML += '<div class="empty-state">録音がまだありません</div>';
+    return;
+  }
+
+  // recording_id ごとにグループ化
+  const recIds = [...new Set(segs.map(s => s.recording_id))];
+  const recsWithDate = [];
+  for (const recId of recIds) {
+    const rec = await DB.getRecording(recId);
+    if (!rec) continue;
+    const recSegs = segs.filter(s => s.recording_id === recId);
+    recsWithDate.push({ rec, recSegs });
+  }
+  // 新しい日付順にソート
+  recsWithDate.sort((a, b) => b.rec.lesson_date.localeCompare(a.rec.lesson_date));
+
+  for (const { rec, recSegs } of recsWithDate) {
+    for (const seg of recSegs) {
+      const row = document.createElement('div');
+      row.className = 'list-item';
+      row.innerHTML = `
+        <div class="list-item-main">
+          <div class="list-item-title">${fmtDate(rec.lesson_date)}</div>
+          <div class="list-item-sub">${fmtTime(seg.start_seconds)}〜${fmtTime(seg.end_seconds)}</div>
+        </div>
+        <span class="list-item-chevron"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span>
+      `;
+      // タップごとにDBから最新segを取得してopenPlayerに渡す
+      row.addEventListener('click', async () => {
+        const freshSegs = await DB.getSegmentsByItem(item.id);
+        const freshSeg = freshSegs.find(s => s.id === seg.id) || seg;
+        openPlayer(rec, freshSeg, 'item');
+      });
+      itemPane.appendChild(row);
+    }
+  }
+}
+
+/* ======================================================
+   プレーヤー
+====================================================== */
+async function openPlayer(rec, seg, fromType, favStart, favEnd) {
+  state.currentRecording = rec;
+  state.currentSegment = seg || null;
+  state.favStartSec = null;
+  state.favEndSec = null;
+
+  const blob = await DB.getAudioBlob(rec.audio_blob_key);
+  if (!blob) { showToast('音声データが見つかりません'); return; }
+
+  stopAudio();
+
+  const url = URL.createObjectURL(blob);
+  state.audioElement = new Audio(url);
+  state.audioElement.playbackRate = parseFloat(
+    document.querySelector('.speed-btn.active')?.dataset.speed || '1'
+  );
+
+  // 再生範囲の計算
+  const rangeStart = seg ? seg.start_seconds : (favStart ?? 0);
+  const rangeEnd = seg ? seg.end_seconds : (favEnd ?? rec.duration_seconds);
+
+  document.getElementById('player-header-title').textContent = fmtDate(rec.lesson_date);
+  document.getElementById('player-item-name').textContent = seg
+    ? (state.items.find(i => i.id === seg.item_id)?.name || '')
+    : (fromType === 'fav' ? '（お気に入り）' : '録音全体');
+  document.getElementById('player-date').textContent = fmtDate(rec.lesson_date);
+  document.getElementById('seek-dur').textContent = fmtTime(rangeEnd - rangeStart);
+  document.getElementById('play-icon').innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+  state.isPlaying = false;
+
+  showPage('page-player');
+
+  // デバッグログ：SEGMENTSの実データと再生範囲を出力
+  console.log('[openPlayer] fromType:', fromType);
+  console.log('[openPlayer] seg:', seg ? { id: seg.id, start_seconds: seg.start_seconds, end_seconds: seg.end_seconds, last_position_seconds: seg.last_position_seconds } : null);
+  console.log('[openPlayer] rangeStart:', rangeStart, '/ rangeEnd:', rangeEnd);
+
+  // 続きから再生の判定
+  const lastPos = seg
+    ? (seg.last_position_seconds || 0)
+    : (rec.last_position_seconds || 0);
+
+  console.log('[openPlayer] lastPos:', lastPos);
+
+  // canplayイベント後にシーク（iOS Safari対応：未ロード状態でのcurrentTime設定を防ぐ）
+  const seekAndPlay = (seekTo) => {
+    console.log('[openPlayer] seekTo（audio.currentTime設定値）:', seekTo);
+    const doSeek = () => {
+      state.audioElement.currentTime = seekTo;
+      updateSeekDisplay(seekTo, rangeStart, rangeEnd);
+      playAudio();
+    };
+    if (state.audioElement.readyState >= 2) {
+      // 既にロード済みならすぐシーク
+      doSeek();
+    } else {
+      // ロード待ちしてからシーク
+      state.audioElement.addEventListener('canplay', doSeek, { once: true });
+    }
+  };
+
+  if (lastPos > rangeStart + 3 && lastPos < rangeEnd - 3) {
+    const toast = document.getElementById('resume-toast');
+    document.getElementById('resume-toast-msg').textContent =
+      `前回 ${fmtTime(lastPos - rangeStart)} まで再生しました`;
+    toast.classList.remove('hidden');
+
+    document.getElementById('btn-resume-yes').onclick = () => {
+      toast.classList.add('hidden');
+      seekAndPlay(lastPos);
+    };
+    document.getElementById('btn-resume-no').onclick = () => {
+      toast.classList.add('hidden');
+      seekAndPlay(rangeStart);
+    };
+  } else {
+    document.getElementById('resume-toast').classList.add('hidden');
+    seekAndPlay(rangeStart);
+  }
+
+  // シークバー更新
+  state.seekUpdateInterval = setInterval(() => {
+    if (!state.audioElement) return;
+    const cur = state.audioElement.currentTime;
+    updateSeekDisplay(cur, rangeStart, rangeEnd);
+
+    // 区間終了で停止
+    if (cur >= rangeEnd - 0.5) {
+      state.audioElement.pause();
+      state.isPlaying = false;
+      document.getElementById('play-icon').innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+      clearInterval(state.seekUpdateInterval);
+    }
+  }, 500);
+
+  // 停止時に位置を保存
+  state.audioElement.onpause = async () => {
+    const cur = state.audioElement.currentTime;
+    if (seg) {
+      await DB.updateSegmentLastPosition(seg.id, cur);
+    } else {
+      await DB.updateRecordingLastPosition(rec.id, cur);
+    }
+  };
+
+  state._rangeStart = rangeStart;
+  state._rangeEnd = rangeEnd;
+}
+
+function updateSeekDisplay(cur, rangeStart, rangeEnd) {
+  const rel = cur - rangeStart;
+  const total = rangeEnd - rangeStart;
+  document.getElementById('seek-cur').textContent = fmtTime(Math.max(0, rel));
+  const pct = total > 0 ? Math.min(1000, Math.round((rel / total) * 1000)) : 0;
+  document.getElementById('seek-bar').value = pct;
+}
+
+function playAudio() {
+  if (!state.audioElement) return;
+  state.audioElement.play().catch(e => console.error(e));
+  state.isPlaying = true;
+  document.getElementById('play-icon').innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+}
+
+function stopAudio() {
+  if (state.audioElement) {
+    state.audioElement.pause();
+    state.audioElement.src = '';
+    state.audioElement = null;
+  }
+  clearInterval(state.seekUpdateInterval);
+  state.isPlaying = false;
+}
+
+function initPlayer() {
+  document.getElementById('btn-play').addEventListener('click', () => {
+    if (!state.audioElement) return;
+    if (state.isPlaying) {
+      state.audioElement.pause();
+      state.isPlaying = false;
+      document.getElementById('play-icon').innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+    } else {
+      playAudio();
+    }
+  });
+
+  document.getElementById('seek-bar').addEventListener('input', e => {
+    if (!state.audioElement) return;
+    const pct = e.target.value / 1000;
+    const rangeStart = state._rangeStart || 0;
+    const rangeEnd = state._rangeEnd || state.currentRecording?.duration_seconds || 0;
+    const newTime = rangeStart + pct * (rangeEnd - rangeStart);
+    state.audioElement.currentTime = newTime;
+    updateSeekDisplay(newTime, rangeStart, rangeEnd);
+  });
+
+  [
+    ['btn-skip-m30', -30], ['btn-skip-m10', -10],
+    ['btn-skip-p10', 10], ['btn-skip-p30', 30]
+  ].forEach(([id, sec]) => {
+    document.getElementById(id).addEventListener('click', () => {
+      if (!state.audioElement) return;
+      const rangeStart = state._rangeStart || 0;
+      const rangeEnd = state._rangeEnd || 0;
+      const newTime = Math.max(rangeStart, Math.min(rangeEnd, state.audioElement.currentTime + sec));
+      state.audioElement.currentTime = newTime;
+      updateSeekDisplay(newTime, rangeStart, rangeEnd);
+    });
+  });
+
+  document.querySelectorAll('.speed-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (state.audioElement) state.audioElement.playbackRate = parseFloat(btn.dataset.speed);
+    });
+  });
+
+  document.getElementById('silence-toggle').addEventListener('click', () => {
+    const tog = document.getElementById('silence-toggle');
+    state.silenceSkip = !state.silenceSkip;
+    tog.classList.toggle('on', state.silenceSkip);
+  });
+
+  initFavoriteModal();
+}
+
+/* ======================================================
+   お気に入り機能
+====================================================== */
+function initFavoriteModal() {
+  document.getElementById('btn-add-fav').addEventListener('click', () => {
+    document.getElementById('fav-title-input').value = '';
+    document.getElementById('fav-start-label').textContent = '開始位置を設定';
+    document.getElementById('fav-end-label').textContent = '終了位置を設定';
+    document.getElementById('btn-fav-start').classList.remove('set');
+    document.getElementById('btn-fav-end').classList.remove('set');
+    state.favStartSec = null;
+    state.favEndSec = null;
+    showModal('modal-fav');
+  });
+
+  document.getElementById('modal-fav-close').addEventListener('click', () => hideModal('modal-fav'));
+
+  document.getElementById('btn-fav-start').addEventListener('click', () => {
+    if (!state.audioElement) return;
+    state.favStartSec = state.audioElement.currentTime;
+    document.getElementById('fav-start-label').textContent = '開始: ' + fmtTime(state.favStartSec);
+    document.getElementById('btn-fav-start').classList.add('set');
+  });
+
+  document.getElementById('btn-fav-end').addEventListener('click', () => {
+    if (!state.audioElement) return;
+    state.favEndSec = state.audioElement.currentTime;
+    document.getElementById('fav-end-label').textContent = '終了: ' + fmtTime(state.favEndSec);
+    document.getElementById('btn-fav-end').classList.add('set');
+  });
+
+  document.getElementById('btn-save-fav').addEventListener('click', async () => {
+    const title = document.getElementById('fav-title-input').value.trim();
+    if (!title) { showToast('タイトルを入力してください'); return; }
+    if (state.favStartSec === null) { showToast('開始位置を設定してください'); return; }
+    if (state.favEndSec === null) { showToast('終了位置を設定してください'); return; }
+    if (state.favEndSec <= state.favStartSec) { showToast('終了位置は開始より後にしてください'); return; }
+
+    await DB.saveFavorite({
+      recording_id: state.currentRecording.id,
+      title,
+      start_seconds: state.favStartSec,
+      end_seconds: state.favEndSec
+    });
+    hideModal('modal-fav');
+    showToast('お気に入りに保存しました');
+  });
+}
+
+async function confirmDeleteFav(id) {
+  return new Promise(resolve => {
+    document.getElementById('confirm-title').textContent = 'お気に入りを削除';
+    document.getElementById('confirm-msg').textContent = 'このお気に入りを削除しますか？';
+    showModal('modal-confirm');
+    const okBtn = document.getElementById('btn-confirm-ok');
+    const cancelBtn = document.getElementById('btn-confirm-cancel');
+    const cleanup = () => { hideModal('modal-confirm'); okBtn.onclick = null; cancelBtn.onclick = null; };
+    okBtn.onclick = async () => {
+      await DB.deleteFavorite(id);
+      cleanup();
+      renderFavTab();
+      showToast('削除しました');
+      resolve(true);
+    };
+    cancelBtn.onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
+/* ======================================================
+   項目管理機能
+====================================================== */
+async function loadItems() {
+  state.items = await DB.getAllItems();
+
+}
+
+function renderItemsManage() {
+  const list = document.getElementById('items-manage-list');
+  list.innerHTML = '';
+  state.items.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'manage-item';
+    row.innerHTML = `
+      <span class="drag-handle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg></span>
+      <div class="manage-item-main">
+        <div class="manage-item-name">${item.name}</div>
+        <span class="manage-item-badge ${item.measure_bar ? 'badge-bar' : 'badge-nobar'}">${item.measure_bar ? '小節管理ON' : '小節管理OFF'}</span>
+      </div>
+      <button class="edit-btn" aria-label="編集">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </button>
+    `;
+    row.querySelector('.edit-btn').addEventListener('click', () => openItemModal(item));
+    list.appendChild(row);
+  });
+}
+
+function openItemModal(item = null) {
+  state.editingItemId = item ? item.id : null;
+  state.measureBarChecked = item ? item.measure_bar : false;
+
+  document.getElementById('modal-item-title').textContent = item ? '曲目を編集' : '曲目を追加';
+  document.getElementById('item-name-input').value = item ? item.name : '';
+  document.getElementById('measure-bar-box').classList.toggle('checked', state.measureBarChecked);
+  document.getElementById('btn-delete-item').classList.toggle('hidden', !item);
+  showModal('modal-item');
+}
+
+function initItemModal() {
+  document.getElementById('btn-add-item').addEventListener('click', () => openItemModal());
+
+  document.getElementById('modal-item-close').addEventListener('click', () => hideModal('modal-item'));
+
+  document.getElementById('measure-bar-check').addEventListener('click', () => {
+    state.measureBarChecked = !state.measureBarChecked;
+    document.getElementById('measure-bar-box').classList.toggle('checked', state.measureBarChecked);
+  });
+
+  document.getElementById('btn-save-item').addEventListener('click', async () => {
+    const name = document.getElementById('item-name-input').value.trim();
+    if (!name) { showToast('曲目名を入力してください'); return; }
+
+    if (state.editingItemId) {
+      const item = state.items.find(i => i.id === state.editingItemId);
+      item.name = name;
+      item.measure_bar = state.measureBarChecked;
+      await DB.saveItem(item);
+    } else {
+      const maxOrder = state.items.reduce((m, i) => Math.max(m, i.sort_order || 0), -1);
+      await DB.saveItem({ name, measure_bar: state.measureBarChecked, sort_order: maxOrder + 1 });
+    }
+
+    state.items = await DB.getAllItems();
+    hideModal('modal-item');
+    renderItemsManage();
+    renderHomeItems();
+    showToast(state.editingItemId ? '保存しました' : '追加しました');
+  });
+
+  document.getElementById('btn-delete-item').addEventListener('click', async () => {
+    if (!state.editingItemId) return;
+    document.getElementById('confirm-title').textContent = '曲目を削除';
+    document.getElementById('confirm-msg').textContent = 'この曲目を削除しますか？\n録音データは残ります。';
+    hideModal('modal-item');
+    showModal('modal-confirm');
+    const okBtn = document.getElementById('btn-confirm-ok');
+    const cancelBtn = document.getElementById('btn-confirm-cancel');
+    const cleanup = () => { hideModal('modal-confirm'); okBtn.onclick = null; cancelBtn.onclick = null; };
+    okBtn.onclick = async () => {
+      await DB.deleteItem(state.editingItemId);
+      state.items = await DB.getAllItems();
+      cleanup();
+      renderItemsManage();
+      renderHomeItems();
+      showToast('削除しました');
+    };
+    cancelBtn.onclick = cleanup;
+  });
+}
+
+/* ======================================================
+   設定
+====================================================== */
+function renderSettings() {
+  const s = DB.getSettings();
+  document.getElementById('settings-silence-toggle').classList.toggle('on', !!s.silenceSkip);
+  document.getElementById('settings-speed').value = s.defaultSpeed || '1';
+}
+
+function initSettings() {
+  document.getElementById('settings-silence-toggle').addEventListener('click', () => {
+    const tog = document.getElementById('settings-silence-toggle');
+    const s = DB.getSettings();
+    s.silenceSkip = !s.silenceSkip;
+    tog.classList.toggle('on', s.silenceSkip);
+    DB.saveSettings(s);
+  });
+  document.getElementById('settings-speed').addEventListener('change', e => {
+    const s = DB.getSettings();
+    s.defaultSpeed = e.target.value;
+    DB.saveSettings(s);
+  });
+  document.getElementById('btn-manage-data').addEventListener('click', () => {
+    showToast('録音データはデータ管理から削除できます（将来実装）');
+  });
+}
+
+/* ======================================================
+   起動
+====================================================== */
+async function init() {
+  await loadItems();
+  renderHomeItems();
+  initNavigation();
+  initRecording();
+  initPlayer();
+  initItemModal();
+  initSettings();
+  updateRecordingUI(); // 起動時にslide-disabledを正しく設定
+}
+
+document.addEventListener('DOMContentLoaded', init);
