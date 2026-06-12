@@ -473,7 +473,7 @@ function renderHomeItems() {
       <p class="items-empty-title">まず曲目登録から始めよう！</p>
       <p class="items-empty-sub">練習する曲やテキストを登録すると、曲ごとに録音を管理できるよ♪</p>
       <p class="items-empty-hint">右上の ✏️ マークからいつでも曲目を追加・変更できるよ</p>
-      <button class="items-empty-btn" id="btn-goto-items-from-home">今すぐ曲目登録！</button>
+      <button class="items-empty-btn" id="btn-goto-items-from-home">＋今すぐ登録</button>
     `;
     list.appendChild(guide);
     guide.querySelector('#btn-goto-items-from-home').addEventListener('click', () => {

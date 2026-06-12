@@ -300,21 +300,18 @@ svg { display: block; }
   line-height: 1.7;
 }
 .items-empty-hint {
-  font-size: 14px; color: var(--blue-dark);
-  background: var(--blue-light);
-  border: 1.5px solid var(--blue-mid);
-  border-radius: 12px;
-  padding: 10px 16px;
-  line-height: 1.6;
+  font-size: 14px; color: var(--gray-600);
+  line-height: 1.7;
 }
 .items-empty-btn {
   margin-top: 8px;
   padding: 16px 32px;
-  background: #FF7F8A;
-  color: var(--white);
+  background: #FFFDE7;
+  color: #7A5800;
   font-size: 17px; font-weight: 700;
   border-radius: 16px;
-  box-shadow: 0 4px 14px rgba(255,127,138,0.4);
+  border: 2px solid #E6A817;
+  box-shadow: 0 2px 8px rgba(230,168,23,0.2);
   letter-spacing: 0.03em;
 }
 .items-empty-btn:active { opacity: 0.85; transform: scale(0.97); }
