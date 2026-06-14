@@ -60,22 +60,22 @@ svg { display: block; }
   z-index: 10;
 }
 .header-title {
-  font-family: 'Nunito', "Hiragino Marugothic ProN", "Hiragino Sans", sans-serif;
-  font-size: 22px;
-  font-weight: 900;
   flex: 1;
   min-width: 0;
-  color: var(--blue-dark);
-  letter-spacing: 0.04em;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   white-space: nowrap;
   overflow: hidden;
 }
+.header-logo {
+  height: 36px;
+  width: auto;
+  flex-shrink: 0;
+}
 .header-clef {
-  width: 18px;
-  height: 27px;
+  width: 28px;
+  height: 42px;
   flex-shrink: 0;
   filter: drop-shadow(0 1px 3px rgba(255,127,138,0.3));
 }
@@ -168,6 +168,12 @@ svg { display: block; }
   gap: 12px;
 }
 .status-idle-text { font-size: 20px; font-weight: 700; color: var(--blue-dark); opacity: 0.7; }
+.status-clef {
+  width: 20px;
+  height: 30px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 1px 2px rgba(255,127,138,0.3));
+}
 
 /* 録音中ラッパー（1行中央表示） */
 .status-rec-wrap {
