@@ -73,6 +73,14 @@ svg { display: block; }
   width: auto;
   flex-shrink: 0;
 }
+.header-logo-text {
+  font-family: 'M PLUS Rounded 1c', "Hiragino Marugothic ProN", sans-serif;
+  font-size: 22px;
+  font-weight: 900;
+  color: #1A8BBF;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
 .header-clef {
   width: 28px;
   height: 42px;
