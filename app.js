@@ -1260,7 +1260,42 @@ function renderSettings() {
   document.getElementById('settings-speed').value = s.defaultSpeed || '1';
 }
 
-function initSettings() {
+function initSettings() document.getElementById('btn-diag-list').addEventListener('click', async () => {
+    const resultEl = document.getElementById('diag-result');
+    resultEl.textContent = '読み込み中...';
+    const recs = await DB.getAllRecordings();
+    resultEl.innerHTML = '';
+
+    for (const rec of recs) {
+      const blob = await DB.getAudioBlob(rec.audio_blob_key);
+      const sizeKB = blob ? (blob.size / 1024).toFixed(1) : '取得失敗';
+
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:10px 0; border-bottom:1px solid #eee;';
+      row.innerHTML = `
+        <div><b>${rec.lesson_date}</b></div>
+        <div>表示上の長さ: ${fmtTime(rec.duration_seconds)}</div>
+        <div>実データサイズ: ${sizeKB} KB</div>
+        <button class="settings-btn diag-export-btn" data-key="${rec.audio_blob_key}" data-date="${rec.lesson_date}" style="margin-top:6px; padding:8px 12px;">この録音を書き出す</button>
+      `;
+      resultEl.appendChild(row);
+    }
+
+    resultEl.querySelectorAll('.diag-export-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const blob = await DB.getAudioBlob(btn.dataset.key);
+        if (!blob) { showToast('データが見つかりません'); return; }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `piarecco_${btn.dataset.date}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      });
+    });
+  });{
   document.getElementById('settings-silence-toggle').addEventListener('click', () => {
     const tog = document.getElementById('settings-silence-toggle');
     const s = DB.getSettings();
