@@ -745,8 +745,7 @@ async function renderPlayPage() {
       <span class="item-tab-count">${segs.length}件</span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><polyline points="9 18 15 12 9 6"/></svg>
     `;
-    btn.addEventListener('click', () => openItemHistory(item, itemsWithSegs, itemsWithSegs.length - 1));
-    itemGrid.appendChild(btn);
+   itemGrid.appendChild(btn);
   }
   // ボタンのクリックハンドラを正しいindexで再設定
   const btns = itemGrid.querySelectorAll('.item-tab-btn');
