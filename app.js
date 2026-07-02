@@ -862,15 +862,20 @@ async function openItemHistory(item, allItems, currentIndex) {
       console.log(`  seg[${i}] id:${s.id} item_id:${s.item_id} start_seconds:${s.start_seconds} end_seconds:${s.end_seconds}`);
     });
 
-    // 録音開始・終了時刻を計算
-    const startIso = rec.recorded_at || rec.created_at;
-    const endIso = startIso
-      ? new Date(new Date(startIso).getTime() + rec.duration_seconds * 1000).toISOString()
-      : null;
-    const timeRange = `${fmtDateTime(startIso)}〜${fmtTimeHHMM(endIso)}`;
-    const duration = fmtTime(rec.duration_seconds);
+// 録音全体の開始時刻（各セグメントの時刻計算の基準）
+    const recStartIso = rec.recorded_at || rec.created_at;
 
     for (const seg of recSegs) {
+      // このセグメント自身の開始・終了時刻を計算
+      // （曲目ボタンを押した時刻 〜 次に切り替えた/録音停止した時刻）
+      const segStartIso = recStartIso
+        ? new Date(new Date(recStartIso).getTime() + seg.start_seconds * 1000).toISOString()
+        : null;
+      const segEndIso = recStartIso
+        ? new Date(new Date(recStartIso).getTime() + seg.end_seconds * 1000).toISOString()
+        : null;
+      const timeRange = `${fmtDateTime(segStartIso)}〜${fmtTimeHHMM(segEndIso)}`;
+      const duration = fmtTime(seg.end_seconds - seg.start_seconds);
       const row = document.createElement('div');
       row.className = 'list-item';
       row.innerHTML = `
