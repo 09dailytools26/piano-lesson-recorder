@@ -1260,7 +1260,24 @@ function renderSettings() {
   document.getElementById('settings-speed').value = s.defaultSpeed || '1';
 }
 
-function initSettings() document.getElementById('btn-diag-list').addEventListener('click', async () => {
+  function initSettings() {
+  document.getElementById('settings-silence-toggle').addEventListener('click', () => {
+    const tog = document.getElementById('settings-silence-toggle');
+    const s = DB.getSettings();
+    s.silenceSkip = !s.silenceSkip;
+    tog.classList.toggle('on', s.silenceSkip);
+    DB.saveSettings(s);
+  });
+  document.getElementById('settings-speed').addEventListener('change', e => {
+    const s = DB.getSettings();
+    s.defaultSpeed = e.target.value;
+    DB.saveSettings(s);
+  });
+  document.getElementById('btn-manage-data').addEventListener('click', () => {
+    showToast('録音データはデータ管理から削除できます（将来実装）');
+  });
+
+  document.getElementById('btn-diag-list').addEventListener('click', async () => {
     const resultEl = document.getElementById('diag-result');
     resultEl.textContent = '読み込み中...';
     const recs = await DB.getAllRecordings();
@@ -1295,24 +1312,8 @@ function initSettings() document.getElementById('btn-diag-list').addEventListene
         setTimeout(() => URL.revokeObjectURL(url), 10000);
       });
     });
-  });{
-  document.getElementById('settings-silence-toggle').addEventListener('click', () => {
-    const tog = document.getElementById('settings-silence-toggle');
-    const s = DB.getSettings();
-    s.silenceSkip = !s.silenceSkip;
-    tog.classList.toggle('on', s.silenceSkip);
-    DB.saveSettings(s);
   });
-  document.getElementById('settings-speed').addEventListener('change', e => {
-    const s = DB.getSettings();
-    s.defaultSpeed = e.target.value;
-    DB.saveSettings(s);
-  });
-  document.getElementById('btn-manage-data').addEventListener('click', () => {
-    showToast('録音データはデータ管理から削除できます（将来実装）');
-  });
-}
-
+}     
 /* ======================================================
    起動
 ====================================================== */
